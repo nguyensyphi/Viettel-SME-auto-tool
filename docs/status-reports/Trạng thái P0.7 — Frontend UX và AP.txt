@@ -1,0 +1,74 @@
+ Trạng thái P0.7 — Frontend UX và API integration
+
+**Phạm vi:** tích hợp local-first theo plan đã duyệt, dùng các service P0.2–P0.6 có sẵn. Không deploy, không nối hệ thống bên ngoài, không thay đổi schema hay migration.
+
+## Đã hoàn thành
+
+- Ứng dụng Next.js nội bộ, không public signup; đăng nhập cookie HttpOnly, nhận invite một lần, route API v1 có kiểm tra session/Origin và áp role/scope phía server.
+- Dashboard hôm nay tối giản dùng danh sách task trong phạm vi được cấp; tách task đến hạn hôm nay/quá hạn theo `Asia/Ho_Chi_Minh`. Không thêm KPI doanh thu, giờ làm mặc định hoặc dashboard/monitoring nâng cao.
+- Lead list/detail/create, stage, notes, contactability/suppression và assignment nối vào repository P0.5; contact được che mặc định. Lượt mở chi tiết lead ghi audit metadata không chứa contact.
+- Import wizard gồm upload `.xlsx` tối đa 5 MiB, mapping allow-list, masked preview/dedupe, review riêng, approve riêng và commit riêng. Upload không ghi workbook thô/PII vào disk hoặc log; preview/prepared rows nằm trong RAM và được xóa khi hết 30 phút tính từ lúc preview tạo, commit thành công hoặc discard. `GET /import-jobs/:id` đọc được handle trong tiến trình và metadata của job đã commit theo quyền/scope.
+- Task list/create/complete/defer, planner theo ngày và giờ AM nhập rõ ràng, locked time blocks; UI không tạo task gọi/email/Zalo.
+- Team/access/invitation và audit view/CSV; không có email/chat invitation tự gửi.
+
+## Kiểm chứng
+
+Đã xác nhận `pnpm db:validate`, `pnpm typecheck`, `pnpm lint` và `pnpm format:check` thành công; `pnpm test` cho kết quả **23 files, 215 tests passed**. `pnpm --filter @am-sme/web build` thành công bằng Next webpack; HTTP smoke test trên loopback xác nhận `/` và `/invite/accept` trả 200. Webpack extension alias cần thiết vì các package TypeScript hiện dùng NodeNext import specifier `.js`; Prisma runtime helper được khai báo tường minh trong dependency database.
+
+Kiểm thử database hiện dùng PGlite/PostgreSQL-compatible embedded adapter; **chưa** kiểm chứng trên PostgreSQL server native. Chưa chạy browser E2E hoặc staging test.
+
+## Blocker trước khi đăng nhập/pilot
+
+1. Chưa có bootstrap flow được duyệt cho Admin đầu tiên. Seed tổng hợp không tạo tài khoản; không mở signup công khai.
+2. `AUTH_SESSION_TTL_MS` và `AUTH_INVITATION_TTL_MS` đang để trống trong `.env.example`, chờ owner/security policy cung cấp giá trị; app fail-closed nếu thiếu.
+3. Cần kiểm thử migration trên PostgreSQL native, thống nhất retention/test-data approval và rà soát vận hành trước pilot. Không dùng dữ liệu khách hàng thật trước khi các điều kiện đó được duyệt.
+4. Preview/import handle là single-process memory; restart sẽ làm mất preview/prepared state. Không có Redis/object-store backing trong P0.7.
+
+## Chạy local
+
+1. `cp .env.example .env`; đổi placeholder PostgreSQL password, đồng bộ `DATABASE_URL`, và điền hai TTL auth sau khi được phê duyệt.
+2. Chạy `pnpm install --frozen-lockfile`.
+3. `docker compose --env-file .env -f infra/docker-compose.yml up -d postgres redis`.
+4. `pnpm db:validate && pnpm db:migrate:deploy && pnpm db:generate && pnpm db:seed:synthetic`.
+5. `pnpm typecheck && pnpm test && pnpm lint && pnpm --filter @am-sme/web build`.
+6. `pnpm --filter @am-sme/web dev`, mở `http://127.0.0.1:3000`. Cần hoàn tất bootstrap Admin trước khi đăng nhập.
+
+Không tạo migration mới trong P0.7.
+
+## Danh sách file P0.7
+
+**Web app mới:**
+
+- `apps/web/package.json`
+- `apps/web/tsconfig.json`
+- `apps/web/next.config.ts`
+- `apps/web/app/api/v1/[...segments]/route.ts`
+- `apps/web/app/invite/accept/page.tsx`
+- `apps/web/app/layout.tsx`
+- `apps/web/app/page.tsx`
+- `apps/web/app/styles.css`
+- `apps/web/src/server/http-api.ts`
+- `apps/web/src/server/import-api.ts`
+- `apps/web/src/server/runtime.ts`
+- `apps/web/src/ui/workspace-app.tsx`
+- `apps/web/test/http-api.test.ts`
+- `apps/web/test/import-api.test.ts`
+- `apps/web/test/workspace-ui.test.tsx`
+
+**Workspace, service boundary và docs/config:**
+
+- `.env.example`
+- `README.md`
+- `design/STATUS_P0.7.md`
+- `eslint.config.js`
+- `package.json`
+- `packages/auth/src/index.ts`
+- `packages/database/package.json`
+- `packages/database/src/import-workflow.ts`
+- `packages/excel-import/src/index.ts`
+- `pnpm-lock.yaml`
+- `pnpm-workspace.yaml`
+- `tsconfig.json`
+- `vitest.config.ts`
+
+Không đưa `.env`, workbook, `node_modules`, `.next` hoặc generated Prisma client vào snapshot. Sinh Prisma client theo lệnh `pnpm db:generate` sau khi cài đặt.

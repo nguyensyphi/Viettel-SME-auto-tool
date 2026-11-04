@@ -1,0 +1,13 @@
+{
+  "name": "@am-sme/excel-import",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@am-sme/domain": "workspace:*",
+    "saxes": "^6.0.0"
+  }
+}

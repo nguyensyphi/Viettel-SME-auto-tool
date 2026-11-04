@@ -1,0 +1,136 @@
+# Runbook bảo mật và vận hành — P0.8
+
+## Trạng thái và ranh giới an toàn
+
+Đây là hướng dẫn vận hành cho local hoặc staging riêng tư; không phải hướng dẫn triển khai production. Chỉ dùng dữ liệu synthetic hoặc bộ test có mã phê duyệt. Không kết nối CRM, Zalo hay Telegram; không gửi tin; không tạo lịch chạy định kỳ. Bản P0.7 hiện là ứng dụng một tiến trình: import preview/prepared rows nằm trong RAM tối đa 30 phút và mất khi tiến trình khởi động lại. Chưa có hàng đợi/worker, backup tự động, môi trường staging đã kiểm chứng hay dashboard vận hành.
+
+Trong P0.8, migration chỉ thêm dấu mốc bootstrap Admin đầu tiên; không xóa/chỉnh dữ liệu hiện có. Mọi quyết định retention và thời hạn lưu dữ liệu vẫn để trống, fail-closed. Không dùng runbook này để xóa dữ liệu thật.
+
+## Phân loại dữ liệu đề xuất
+
+Các nhãn dưới đây là phân loại vận hành đề xuất để giảm rủi ro; chủ dữ liệu và người phụ trách bảo mật cần duyệt trước khi dùng với dữ liệu không tổng hợp.
+
+| Nhãn đề xuất | Ví dụ trong dự án                                                                                                               | Cách xử lý                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Công khai    | Thông tin dịch vụ đã được tổ chức công bố                                                                                       | Chỉ dùng bản đã được duyệt công khai; không đưa hồ sơ khách hàng vào đây.                                                    |
+| Nội bộ       | Tài liệu quy trình, mã lỗi, cấu hình không chứa bí mật                                                                          | Chỉ chia sẻ với người được phân quyền; không đăng lên không gian công khai.                                                  |
+| Mật          | Tên công ty/địa bàn, lead, tên người liên hệ, điện thoại/email, ghi chú, consent và suppression evidence, dữ liệu import        | Giới hạn theo workspace/owner/team; mask trong danh sách/log; chỉ thu trường cần thiết.                                      |
+| Hạn chế cao  | Mật khẩu, secret/token, session/invitation token, khóa mã hóa, bản sao DB có thể tái tạo dữ liệu, file import gốc nếu phát sinh | Không ghi log, chat, source, fixture, ảnh chụp hoặc snapshot. Dùng env/secret store được duyệt; giới hạn người quản lý khóa. |
+
+File workbook gốc hiện không được ghi xuống đĩa; không thay đổi nguyên tắc đó. Không nhập CMND/CCCD hoặc trường định danh cá nhân bị loại khỏi allow-list.
+
+## Truy cập, RBAC và audit
+
+- Tài khoản chỉ được tạo qua lời mời; `PUBLIC_SIGNUP_ENABLED=false`. Vai trò là AM, Manager và Admin; mọi quyết định quyền phải nằm ở server. AM chỉ xem phạm vi được giao, Manager trong team, Admin trong workspace.
+- Session dùng cookie HttpOnly/SameSite; TTL phiên là **28.800.000 ms (8 giờ)**, TTL lời mời là **86.400.000 ms (24 giờ)**. Đây là cấu hình đã chốt, không tự sửa trong vận hành.
+- Audit event là append-only ở DB, không có API sửa/xóa. Ghi actor/action/entity/field names và kết quả; không ghi phone, email, token, password, raw workbook row hoặc nội dung ghi chú. Export audit cũng tạo audit event.
+- Bootstrap Admin ghi `INITIAL_ADMIN_BOOTSTRAPPED` với actor null. Dấu `AdminBootstrapState` là singleton bền vững, không có foreign key tới User để không bị xóa theo vòng đời tài khoản; DB trigger từ chối UPDATE/DELETE marker. Không xóa/reset marker hoặc chỉnh tay role Admin để chạy CLI lại.
+- P0.8.1 thêm `pnpm db:recover-admin-password` **chỉ cho local với PostgreSQL loopback**; staging bị từ chối. Lệnh yêu cầu `AUTH_RECOVERY_WORKSPACE_SLUG` (slug không bí mật), hỏi email Admin rồi mật khẩu mới trên TTY; password raw mode bị ẩn và không có đường nhận từ env/CLI argument. Chỉ tài khoản `ACTIVE` có role `ADMIN` và credential trong workspace chỉ định được chọn. Credential Argon2id được cập nhật cùng audit `ADMIN_PASSWORD_RECOVERED` trong transaction serializable; marker bootstrap giữ nguyên và utility không xóa/đổi record nào khác, không có HTTP reset route. Không đưa mật khẩu vào file/log/shell history.
+- Recovery không thu hồi `AuthSession`; session hiện có có thể còn dùng được tới expiry. Khi nghi lộ session/thiết bị, cô lập dịch vụ và làm theo quy trình thu hồi riêng; không coi đổi mật khẩu đơn lẻ là biện pháp thu hồi phiên.
+- Nếu phát hiện thiếu audit hoặc truy cập sai scope: dừng thao tác liên quan, lưu mã request/job và thời điểm, mở incident; không sửa audit history.
+
+## Mã hóa, bí mật và luân chuyển khóa
+
+- Local chỉ bind loopback. Staging bắt buộc HTTPS nhưng chưa được triển khai/kiểm chứng. Mã hóa at-rest phụ thuộc cấu hình PostgreSQL/volume và nơi lưu backup; P0.8 chưa xác nhận cấu hình đó.
+- Giữ `.env` ngoài Git và ngoài ZIP. Bootstrap chỉ nhận credential từ process environment được inject an toàn/secret store hoặc terminal raw mode không echo; CLI bỏ qua credential bootstrap chỉ có trong `.env`. Không lưu password bootstrap trong `.env`, tham số lệnh, shell history, source, test fixture, log, ảnh chụp hay ticket; nếu TTY không an toàn thì dừng.
+- Credential password được hash bằng Argon2id của auth service; session/invitation chỉ lưu hash token. Không gửi hoặc ghi token thô.
+- Khi xoay DB credential: tạo/đổi credential trong secret store được duyệt, cập nhật connection local/staging, kiểm tra app/CLI kết nối được, sau đó thu hồi credential cũ; không dán giá trị vào log. Người vận hành phải tránh để hai cấu hình lệch nhau.
+- Khóa mã hóa backup (nếu được duyệt): tách khóa giải mã khỏi file backup, phân quyền người giữ khóa, kiểm tra giải mã trên bản sao cách ly trước khi thay khóa. Giữ khả năng giải mã các bản backup còn trong thời gian lưu đã được duyệt; không tự đặt thời gian lưu.
+- Nếu token/secret của một tích hợp tương lai lộ: tắt tích hợp, thu hồi/rotate tại nhà cung cấp, cập nhật secret store, rà audit/log đã mask và chỉ bật lại sau kiểm tra. P0 hiện không có credential Zalo/Telegram.
+
+## Backup và khôi phục
+
+### Hiện trạng
+
+Chưa có backup/restore được cấu hình hoặc chạy thực tế trong snapshot; chưa có PostgreSQL server native để kiểm thử. Không có backup nào được tạo trong công việc P0.8. PGlite chỉ xác nhận hành vi PostgreSQL-compatible trong test, không chứng minh backup native.
+
+### Quy trình đề xuất — chỉ áp dụng sau khi chủ dữ liệu/phụ trách hạ tầng duyệt
+
+1. Xác nhận đang nhắm đúng local/staging, dataset synthetic hoặc test được phê duyệt, và đích lưu trữ đã mã hóa/được cấp quyền. Không chạy lên production hoặc DB live.
+2. Cấp kết nối DB và recipient mã hóa qua env/secret store; không đặt password trong command line. Nếu công cụ mã hóa/recipient chưa được duyệt hoặc không có, dừng — không tạo dump plaintext trên disk.
+3. Dùng `pg_dump` tạo luồng backup rồi mã hóa ngay sang file tạm; chỉ đổi tên file sau khi lệnh thành công. Ví dụ khung lệnh, không chạy trong P0.8:
+
+   ```bash
+   set -euo pipefail
+   umask 077
+   test -n "$BACKUP_AGE_RECIPIENT"
+   pg_dump --format=custom --no-owner \
+     --host "$PGHOST" --username "$PGUSER" --dbname "$PGDATABASE" \
+     | age --recipient "$BACKUP_AGE_RECIPIENT" > "$BACKUP_FILE.partial"
+   mv "$BACKUP_FILE.partial" "$BACKUP_FILE"
+   sha256sum "$BACKUP_FILE"
+   ```
+
+   `PGPASSWORD`, recipient/identity và tên file phải được cấp an toàn; không đưa giá trị bí mật vào shell history. Nếu pipeline thất bại, giữ nguyên bản gốc và xử lý file `.partial` theo quy trình được duyệt; không xóa dữ liệu nguồn.
+
+4. Khôi phục thử trong một PostgreSQL database/instance disposable mới, cách ly mạng, không ghi đè DB đang dùng. Giải mã trực tiếp vào `pg_restore` từ stdin; kiểm tra checksum, migration status, row counts synthetic, foreign keys, marker bootstrap, audit append-only, đăng nhập/invite/expiry và trạng thái suppression. Không đưa khóa giải mã vào cùng nơi với backup.
+5. Ghi lại người chạy, mã test, kết quả và lỗi đã mask. Chỉ tuyên bố restore-tested sau khi đã làm với PostgreSQL native; PGlite không thay thế bước này.
+
+## Ứng phó sự cố
+
+**Kích hoạt:** lộ credential/token; đăng nhập/quyền bất thường; log chứa PII; audit thiếu/sai; suppression/opt-out bị bỏ qua; import commit có trạng thái không rõ; mất thiết bị; hoặc phát hiện gửi ra ngoài trái phép.
+
+1. **Khoanh vùng:** dừng app/worker liên quan hoặc cô lập mạng của local/staging; tắt mọi credential tích hợp nếu có. P0 không có sender Zalo/Telegram; nếu thấy một lần gửi thật thì coi là sự cố và dừng ngay.
+2. **Bảo toàn:** ghi thời điểm, môi trường, mã request/job và hành động đã thấy; giữ log đã mask/audit theo quyền. Không chụp hoặc gửi password/token/PII vào chat; không xóa log, audit, backup hay lead để “dọn dấu”.
+3. **Thu hồi:** nhờ người vận hành được chỉ định đổi secret/DB credential và vô hiệu hóa tài khoản/session bị ảnh hưởng theo quy trình đã duyệt. Hiện chưa có UI bulk-revoke/suspend; nếu không thể thu hồi chắc chắn, giữ dịch vụ offline/cô lập cho tới khi có operator xử lý có audit.
+4. **Đánh giá:** kiểm tra audit, trạng thái import, consent/suppression và bản backup cách ly; không tự retry một hành động có thể đã phát sinh tác động bên ngoài.
+5. **Khôi phục:** chỉ mở lại local/staging sau khi nguyên nhân đã được khoanh vùng, secret/role đã được rà, synthetic smoke test pass và chủ vận hành chấp thuận.
+6. **Thông báo:** chủ dữ liệu, phụ trách bảo mật, vận hành và pháp chế/tuân thủ nội bộ quyết định kênh/thời điểm thông báo theo quy trình của tổ chức. Tài liệu này không đưa ra kết luận pháp lý hay thời hạn thông báo.
+
+## Import, hàng đợi và lỗi xử lý
+
+- **Hiện có:** preview/mapping/review/commit tách bước; workbook tối đa 5 MiB, không lưu workbook thô; preview được mask và nằm trong RAM 30 phút. Commit dữ liệu và audit nằm trong transaction; retry dùng idempotency key. Không có queue/BullMQ/worker thực.
+- **Nếu tiến trình restart hoặc preview hết hạn:** handle/prepared state mất; tải lại file tổng hợp/được duyệt và tạo preview mới. Không tìm file raw trên disk hoặc log.
+- **Nếu commit phản hồi không rõ:** không gửi lại với idempotency key mới. Tra cứu ImportJob và audit bằng tài khoản có quyền; xác nhận `COMMITTED`, `ROLLED_BACK` hoặc `FAILED`; so counts/summary mask. Chỉ retry theo cùng idempotency key khi đã xác nhận cách xử lý an toàn.
+- **Nếu lỗi audit/transaction:** coi commit chưa hoàn tất; xác minh không có bản ghi lưng chừng. Không sửa DB trực tiếp để ép job thành công.
+- **Thiết kế queue tương lai (chưa triển khai):** mỗi công việc cần trạng thái/idempotency, retry giới hạn, dead-letter/hold để người vận hành xem, correlation ID không chứa PII, và đối soát trước retry khi kết quả bên ngoài không chắc chắn. Không bật worker hoặc connector trong P0.8.
+
+## Opt-out và suppression
+
+- Khi AM ghi nhận opt-out/complaint, dùng thao tác suppression hiện có trong app; suppression phải được append audit và thắng trạng thái cho phép khi merge. Không xóa record, không hạ mức suppression để chạy thử.
+- Nếu có lỗi lưu suppression/audit: coi contact là **không được liên hệ**, dừng mọi thao tác thủ công/ngoài hệ thống, báo Admin/owner và khắc phục trước khi tiếp tục.
+- P0 không tạo call/email/Zalo/Telegram tự động. Nếu trong tương lai đã có queue, khi nhận opt-out phải chặn send ngay, hủy/hold queued item và đối soát job; không gửi lại nếu consent/opt-out chưa được xác minh.
+
+## Mất thiết bị hoặc nghi lộ phiên
+
+1. Báo Admin/owner và người vận hành hạ tầng; cô lập dịch vụ local/staging nếu không thể ngăn thiết bị kết nối.
+2. Thu hồi session của user và vô hiệu hóa account bằng thủ tục vận hành đã được duyệt; lưu audit. Hiện P0.7 chưa có UI bulk-revoke/suspend dành cho Admin, nên đây là khoảng trống vận hành cần xử lý trước pilot người thật; không tự chạy SQL sửa/xóa session.
+3. Đổi thông tin xác thực nếu có nguy cơ lộ; kiểm tra audit và các export/import job gần nhất trong phạm vi quyền. Không coi đổi mật khẩu đơn lẻ là đủ nếu session còn hiệu lực.
+4. Chỉ cấp lại quyền trên thiết bị đã được bảo vệ và sau khi owner xác nhận; không gửi mật khẩu qua Zalo/Telegram/email không được duyệt.
+
+## Zalo/Telegram — tình huống lỗi, chưa kết nối
+
+Cả hai kênh đang ngoài P0; không có adapter, bot token, OA credential hoặc gửi tin thật. `ZALO_SEND_MODE=disabled` phải giữ nguyên. Không thử bằng tài khoản thật.
+
+- Nếu thấy request outbound hoặc token trong log: dừng dịch vụ, coi là incident, giữ evidence đã mask và kiểm tra credential; không tiếp tục “test”.
+- Lỗi xác thực/secret bị thu hồi trong tích hợp tương lai: disable adapter, rotate secret ngoài ứng dụng và chỉ bật lại sau khi quyền/template/kênh được chủ dự án duyệt.
+- Rate limit, timeout hoặc mất webhook ack: không retry mù vì có thể gửi trùng; hold job và đối soát receipt/provider status trước khi retry.
+- Webhook sai chữ ký/replay: reject, ghi metadata an toàn và cách ly event; không thực hiện action nghiệp vụ.
+- Opt-out/complaint: suppression cục bộ là hard stop; không để queue retry vượt qua suppression.
+- Tin nhắn bot/provider thất bại: không chuyển sang kênh khác để lách hạn chế; tạo task người phụ trách kiểm tra căn cứ/quyền nếu quy trình sau này được duyệt.
+
+## Theo dõi và người chịu trách nhiệm
+
+Chưa có dashboard, cảnh báo tự động hay owner được chỉ định trong P0.8. Vai trò cần được chủ dự án phân công trước staging/pilot:
+
+- **Chủ dữ liệu:** duyệt nguồn/căn cứ, phân loại, retention và suppression.
+- **Phụ trách bảo mật:** duyệt quyền, secrets/key rotation và xử lý incident.
+- **Vận hành ứng dụng/DB:** migration, backup/restore, trạng thái kết nối và khôi phục.
+- **Admin workspace:** lời mời, role và review audit; không thay thế owner dữ liệu/pháp chế.
+- **Pháp chế/tuân thủ nội bộ:** quyết định nghĩa vụ và thông báo áp dụng cho tổ chức; cần người có thẩm quyền chỉ định.
+
+Tín hiệu cần review thủ công trong phạm vi P0: lỗi đăng nhập/403 tăng bất thường; 5xx hoặc DB connection fail; import `FAILED/ROLLED_BACK` hay retry không rõ; audit append lỗi; thay đổi role/export; suppression/opt-out; và bất kỳ outbound request ngoài dự kiến. Chỉ ghi code/count/timestamp/request ID đã kiểm soát, không ghi contact/token. Không tạo lịch theo dõi định kỳ bằng P0.8.
+
+## Mục tiêu khôi phục — đề xuất, chưa cam kết
+
+Đề xuất ban đầu cho pilot nội bộ, cần owner/vận hành đo và duyệt: **RPO ≤ 24 giờ** và **RTO ≤ 8 giờ**. Đây không phải SLA và không được bảo đảm cho đến khi backup mã hóa, restore PostgreSQL native và thời gian khôi phục thực tế được đo. Không có retention period nào được đề xuất ở đây; RPO/RTO không thay thế quyết định thời hạn lưu dữ liệu.
+
+## Quyết định cần chủ dự án duyệt trước pilot
+
+- Người chịu trách nhiệm cho từng vai trò vận hành và đường liên hệ sự cố.
+- Phân loại dữ liệu, căn cứ/source, trường được thu thập và nơi lưu backup.
+- Retention theo từng category, time basis, người duyệt và xử lý yêu cầu xóa/đính chính; hiện để trống và fail-closed, audit tiếp tục append-only.
+- Cấu hình mã hóa at-rest, recipient/key custody, backup cadence (nếu được duyệt), RPO/RTO chính thức và PostgreSQL native restore test.
+- Cơ chế Admin suspend/revoke-all-session cho thiết bị mất; xử lý quyền truy cập khẩn cấp.
+- Quy trình pháp chế/tuân thủ về quyền chủ thể dữ liệu, thông báo sự cố và điều kiện được dùng dữ liệu test. Đây là quyết định của đơn vị có thẩm quyền, không phải tư vấn pháp lý.
+- Kênh, quyền/tài khoản, template, retry/idempotency và opt-out cho tích hợp Zalo/Telegram trước bất kỳ phase tích hợp nào.

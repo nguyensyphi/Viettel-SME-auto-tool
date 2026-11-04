@@ -1,0 +1,51 @@
+# Dependencies & Package Managers
+node_modules/
+**/node_modules/
+.pnpm-store/
+**/.pnpm-store/
+
+# Builds & Outputs
+dist/
+**/dist/
+.next/
+**/.next/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# Playwright & Testing
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+storage/browser_profiles/
+**/storage/browser_profiles/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Raw & Sensitive Data Files (Master Plan: No CMND/CCCD/raw excel rows in git)
+*.xlsx
+*.xls
+*.csv
+!data-samples/lead-import-template.xlsx
+!am-viettel-sme/packages/excel-import/templates/lead-import-template.xlsx
+
+# Generated files
+packages/database/generated/
+**/packages/database/generated/
+
+# Installed Plugins & Junctions
+plugins/
+
+# Archives & Logs
+archive/snapshots-zip/
+*.zip
+*.log
+.DS_Store
+Thumbs.db

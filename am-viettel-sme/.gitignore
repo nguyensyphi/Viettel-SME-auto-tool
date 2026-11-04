@@ -1,0 +1,17 @@
+node_modules/
+.pnpm-store/
+dist/
+.next/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.xlsx
+!packages/excel-import/templates/lead-import-template.xlsx
+*.xls
+*.csv
+*.tsbuildinfo
+.DS_Store
+packages/database/generated/

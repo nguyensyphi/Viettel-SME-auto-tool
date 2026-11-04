@@ -1,0 +1,40 @@
+{
+  "name": "@am-sme/database",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./client": "./generated/client/index.js",
+    "./auth": "./src/prisma-auth-repository.ts",
+    "./admin-bootstrap": "./src/admin-bootstrap.ts",
+    "./admin-password-recovery": "./src/admin-password-recovery.ts",
+    "./import-commit": "./src/import-commit.ts",
+    "./import-workflow": "./src/import-workflow.ts",
+    "./lead-workspace": "./src/lead-workspace.ts",
+    "./retention": "./src/retention.ts",
+    "./tasks": "./src/tasks.ts"
+  },
+  "scripts": {
+    "db:validate": "prisma validate --schema prisma/schema.prisma",
+    "db:format": "prisma format --schema prisma/schema.prisma",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed:synthetic": "node scripts/seed-synthetic.mjs",
+    "db:bootstrap-admin": "tsx scripts/bootstrap-admin.ts",
+    "db:recover-admin-password": "tsx scripts/recover-admin-password.ts"
+  },
+  "dependencies": {
+    "@am-sme/auth": "workspace:*",
+    "@am-sme/domain": "workspace:*",
+    "@am-sme/excel-import": "workspace:*",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "@prisma/client-runtime-utils": "7.10.1",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
+    "@types/pg": "^8.15.5",
+    "prisma": "7.10.1"
+  }
+}

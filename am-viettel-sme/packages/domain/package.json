@@ -1,0 +1,9 @@
+{
+  "name": "@am-sme/domain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./contactability": "./src/contactability/policy.ts"
+  }
+}

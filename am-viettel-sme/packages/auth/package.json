@@ -1,0 +1,14 @@
+{
+  "name": "@am-sme/auth",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./access-control": "./src/access-control.ts",
+    "./http-guard": "./src/http-guard.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0"
+  }
+}

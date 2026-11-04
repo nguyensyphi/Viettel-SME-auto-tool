@@ -1,0 +1,615 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  AM
+  MANAGER
+  ADMIN
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum LeadStage {
+  PENDING_REVIEW
+  NEW
+  QUALIFIED
+  CONTACTED
+  MEETING_SET
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum ContactType {
+  BUSINESS_CONTACT
+  INDIVIDUAL_CONTACT
+}
+
+enum ContactabilityStatus {
+  UNKNOWN
+  REVIEW_REQUIRED
+  ALLOWED_FOR_RECORDED_PURPOSE
+  OPTED_OUT
+  SUPPRESSED
+}
+
+enum LeadSourceType {
+  AM_ENTERED
+  CUSTOMER_REQUEST
+  REFERRAL
+  WEB_SOURCE
+  IMPORTED
+  OTHER
+}
+
+enum ContactBasis {
+  UNKNOWN
+  CUSTOMER_REQUEST
+  EXISTING_RELATIONSHIP
+  CONSENT_RECORDED
+  OTHER_REVIEW_REQUIRED
+}
+
+enum ConsentStatus {
+  UNKNOWN
+  REVIEW_REQUIRED
+  ALLOWED_FOR_RECORDED_PURPOSE
+  OPTED_OUT
+}
+
+enum ContactChannel {
+  PHONE
+  EMAIL
+  SMS
+  ZALO
+  TELEGRAM
+}
+
+enum SuppressionReason {
+  OPT_OUT
+  COMPLAINT
+  LEGAL_REQUEST
+  ADMINISTRATIVE
+  OTHER
+}
+
+enum ProductInterestStatus {
+  UNREVIEWED
+  AM_CONFIRMED
+  REJECTED
+}
+
+enum ImportJobStatus {
+  UPLOADED
+  MAPPED
+  VALIDATED
+  NEEDS_REVIEW
+  APPROVED
+  COMMITTED
+  REJECTED
+  FAILED
+  ROLLED_BACK
+}
+
+enum ImportRowStatus {
+  VALID
+  INVALID
+  DUPLICATE
+  NEEDS_REVIEW
+  SKIPPED
+  COMMITTED
+}
+
+enum TaskType {
+  REVIEW_LEAD
+  CALL
+  EMAIL
+  MEETING
+  FOLLOW_UP
+  INTERNAL
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  DEFERRED
+  CANCELLED
+}
+
+enum TaskApprovalStatus {
+  NOT_REQUIRED
+  PENDING_AM_APPROVAL
+  APPROVED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  FAILED
+}
+
+enum RetentionCategory {
+  RAW_WORKBOOK
+  IMPORT_ROW_RESULTS
+  LEAD_DATA
+  AUDIT_EVENTS
+}
+
+enum RetentionTimeBasis {
+  CREATED_AT
+  UPDATED_AT
+  COMPLETED_AT
+}
+
+model Workspace {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  slug                String                   @unique @db.VarChar(80)
+  displayName         String                   @db.VarChar(160)
+  createdAt           DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime                 @updatedAt @db.Timestamptz(6)
+  users               User[]
+  passwordCredentials UserPasswordCredential[]
+  authSessions        AuthSession[]
+  teams               Team[]
+  memberships         TeamMembership[]
+  leads               Lead[]
+  leadContacts        LeadContact[]
+  leadNotes           LeadNote[]
+  leadSources         LeadSource[]
+  consentRecords      ConsentRecord[]
+  suppressionRecords  SuppressionRecord[]
+  productInterests    ProductInterest[]
+  importJobs          ImportJob[]
+  importRowResults    ImportRowResult[]
+  columnMappings      ColumnMapping[]
+  tasks               Task[]
+  lockedTimeBlocks    LockedTimeBlock[]
+  auditEvents         AuditEvent[]
+  retentionPolicies   DataRetentionPolicy[]
+}
+
+model User {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  workspaceId              String                  @db.Uuid
+  emailNormalized          String                  @db.VarChar(320)
+  displayName              String?                 @db.VarChar(120)
+  status                   UserStatus              @default(INVITED)
+  invitationTokenHash      String?                 @unique @db.VarChar(128)
+  invitedAt                DateTime?               @db.Timestamptz(6)
+  invitationExpiresAt      DateTime?               @db.Timestamptz(6)
+  acceptedAt               DateTime?               @db.Timestamptz(6)
+  deactivatedAt            DateTime?               @db.Timestamptz(6)
+  invitedByUserId          String?                 @db.Uuid
+  createdAt                DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime                @updatedAt @db.Timestamptz(6)
+  workspace                Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  invitedBy                User?                   @relation("UserInvitations", fields: [workspaceId, invitedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  invitedUsers             User[]                  @relation("UserInvitations")
+  membership               TeamMembership?
+  passwordCredential       UserPasswordCredential?
+  authSessions             AuthSession[]
+  ownedLeads               Lead[]                  @relation("LeadOwner")
+  createdLeads             Lead[]                  @relation("LeadCreator")
+  authoredLeadNotes        LeadNote[]              @relation("LeadNoteAuthor")
+  recordedSources          LeadSource[]            @relation("SourceRecorder")
+  recordedConsents         ConsentRecord[]         @relation("ConsentRecorder")
+  recordedSuppressions     SuppressionRecord[]     @relation("SuppressionRecorder")
+  recordedProductInterests ProductInterest[]       @relation("ProductInterestRecorder")
+  uploadedImportJobs       ImportJob[]             @relation("ImportUploader")
+  assignedTasks            Task[]                  @relation("TaskAssignee")
+  assignedByTasks          Task[]                  @relation("TaskAssigner")
+  approvedTasks            Task[]                  @relation("TaskApprover")
+  lockedTimeBlocks         LockedTimeBlock[]
+  auditEvents              AuditEvent[]            @relation("AuditActor")
+  approvedRetentionRules   DataRetentionPolicy[]   @relation("RetentionApprover")
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, emailNormalized])
+  @@index([workspaceId, status])
+  @@index([workspaceId, invitedByUserId])
+}
+
+model Team {
+  id          String           @id @default(uuid()) @db.Uuid
+  workspaceId String           @db.Uuid
+  name        String           @db.VarChar(120)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(6)
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  memberships TeamMembership[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
+}
+
+model TeamMembership {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  userId      String    @db.Uuid
+  teamId      String?   @db.Uuid
+  role        UserRole
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  user        User      @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Restrict)
+  team        Team?     @relation(fields: [workspaceId, teamId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, userId])
+  @@index([workspaceId, teamId, role])
+}
+
+model Lead {
+  id                    String            @id @default(uuid()) @db.Uuid
+  workspaceId           String            @db.Uuid
+  companyName           String            @db.VarChar(200)
+  normalizedCompanyName String            @db.VarChar(200)
+  industry              String?           @db.VarChar(120)
+  district              String?           @db.VarChar(120)
+  province              String?           @db.VarChar(120)
+  website               String?           @db.VarChar(500)
+  businessAddress       String?           @db.VarChar(500)
+  stage                 LeadStage         @default(PENDING_REVIEW)
+  ownerUserId           String?           @db.Uuid
+  createdByUserId       String?           @db.Uuid
+  createdAt             DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime          @updatedAt @db.Timestamptz(6)
+  workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  owner                 User?             @relation("LeadOwner", fields: [workspaceId, ownerUserId], references: [workspaceId, id], onDelete: Restrict)
+  createdBy             User?             @relation("LeadCreator", fields: [workspaceId, createdByUserId], references: [workspaceId, id], onDelete: Restrict)
+  contacts              LeadContact[]
+  notes                 LeadNote[]
+  sources               LeadSource[]
+  productInterests      ProductInterest[]
+  importRowMatches      ImportRowResult[]
+  tasks                 Task[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, ownerUserId, stage])
+  @@index([workspaceId, stage, updatedAt])
+  @@index([workspaceId, normalizedCompanyName, district])
+}
+
+model LeadNote {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @db.Uuid
+  leadId       String    @db.Uuid
+  authorUserId String    @db.Uuid
+  content      String    @db.VarChar(5000)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead         Lead      @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  author       User      @relation("LeadNoteAuthor", fields: [workspaceId, authorUserId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, leadId, createdAt])
+  @@index([workspaceId, authorUserId, createdAt])
+}
+
+model LeadContact {
+  id                   String               @id @default(uuid()) @db.Uuid
+  workspaceId          String               @db.Uuid
+  leadId               String               @db.Uuid
+  contactName          String?              @db.VarChar(160)
+  jobTitle             String?              @db.VarChar(120)
+  contactType          ContactType          @default(BUSINESS_CONTACT)
+  phoneNormalized      String?              @db.VarChar(32)
+  emailNormalized      String?              @db.VarChar(320)
+  contactabilityStatus ContactabilityStatus @default(UNKNOWN)
+  createdAt            DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime             @updatedAt @db.Timestamptz(6)
+  workspace            Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                 Lead                 @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  consentRecords       ConsentRecord[]
+  suppressionRecords   SuppressionRecord[]
+  tasks                Task[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, leadId])
+  @@index([workspaceId, phoneNormalized])
+  @@index([workspaceId, emailNormalized])
+  @@index([workspaceId, contactabilityStatus])
+}
+
+model LeadSource {
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @db.Uuid
+  leadId           String         @db.Uuid
+  sourceType       LeadSourceType
+  sourceLabel      String?        @db.VarChar(160)
+  sourceUrl        String?        @db.VarChar(1000)
+  collectedAt      DateTime?      @db.Timestamptz(6)
+  contactBasis     ContactBasis   @default(UNKNOWN)
+  recordedByUserId String         @db.Uuid
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead             Lead           @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  recordedBy       User           @relation("SourceRecorder", fields: [workspaceId, recordedByUserId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, leadId, createdAt])
+  @@index([workspaceId, sourceType, collectedAt])
+}
+
+model ConsentRecord {
+  id                String         @id @default(uuid()) @db.Uuid
+  workspaceId       String         @db.Uuid
+  leadContactId     String         @db.Uuid
+  channel           ContactChannel
+  purpose           String         @db.VarChar(160)
+  status            ConsentStatus  @default(UNKNOWN)
+  capturedAt        DateTime?      @db.Timestamptz(6)
+  evidenceReference String?        @db.VarChar(500)
+  recordedByUserId  String         @db.Uuid
+  auditEventId      String         @unique @db.Uuid
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  leadContact       LeadContact    @relation(fields: [workspaceId, leadContactId], references: [workspaceId, id], onDelete: Restrict)
+  recordedBy        User           @relation("ConsentRecorder", fields: [workspaceId, recordedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  auditEvent        AuditEvent     @relation(fields: [workspaceId, auditEventId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, auditEventId])
+  @@index([workspaceId, leadContactId, channel, createdAt])
+  @@index([workspaceId, status, createdAt])
+}
+
+model SuppressionRecord {
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @db.Uuid
+  leadContactId    String            @db.Uuid
+  channel          ContactChannel
+  reason           SuppressionReason
+  recordedByUserId String            @db.Uuid
+  auditEventId     String            @unique @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  leadContact      LeadContact       @relation(fields: [workspaceId, leadContactId], references: [workspaceId, id], onDelete: Restrict)
+  recordedBy       User              @relation("SuppressionRecorder", fields: [workspaceId, recordedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  auditEvent       AuditEvent        @relation(fields: [workspaceId, auditEventId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, auditEventId])
+  @@index([workspaceId, leadContactId, channel, createdAt])
+}
+
+model ProductInterest {
+  id                      String                @id @default(uuid()) @db.Uuid
+  workspaceId             String                @db.Uuid
+  leadId                  String                @db.Uuid
+  productCode             String?               @db.VarChar(80)
+  productName             String                @db.VarChar(160)
+  status                  ProductInterestStatus @default(UNREVIEWED)
+  recordedByUserId        String                @db.Uuid
+  createdAt               DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
+  workspace               Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                    Lead                  @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  recordedBy              User                  @relation("ProductInterestRecorder", fields: [workspaceId, recordedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  tasksAsSuggestedService Task[]                @relation("TaskSuggestedService")
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, leadId, status])
+  @@index([workspaceId, productCode])
+}
+
+model ImportJob {
+  id                String            @id @default(uuid()) @db.Uuid
+  workspaceId       String            @db.Uuid
+  uploaderUserId    String            @db.Uuid
+  idempotencyKey    String            @db.VarChar(128)
+  fileChecksum      String            @db.Char(64)
+  status            ImportJobStatus   @default(UPLOADED)
+  totalRows         Int               @default(0)
+  validRows         Int               @default(0)
+  invalidRows       Int               @default(0)
+  duplicateRows     Int               @default(0)
+  failureReasonCode String?           @db.VarChar(80)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  completedAt       DateTime?         @db.Timestamptz(6)
+  workspace         Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  uploader          User              @relation("ImportUploader", fields: [workspaceId, uploaderUserId], references: [workspaceId, id], onDelete: Restrict)
+  rowResults        ImportRowResult[]
+  columnMappings    ColumnMapping[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([workspaceId, fileChecksum])
+  @@index([workspaceId, status, createdAt])
+}
+
+model ImportRowResult {
+  id            String          @id @default(uuid()) @db.Uuid
+  workspaceId   String          @db.Uuid
+  importJobId   String          @db.Uuid
+  rowNumber     Int
+  status        ImportRowStatus
+  errorCodes    String[]        @default([])
+  errorColumns  String[]        @default([])
+  matchedLeadId String?         @db.Uuid
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  importJob     ImportJob       @relation(fields: [workspaceId, importJobId], references: [workspaceId, id], onDelete: Restrict)
+  matchedLead   Lead?           @relation(fields: [workspaceId, matchedLeadId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, importJobId, rowNumber])
+  @@index([workspaceId, importJobId, status])
+}
+
+model ColumnMapping {
+  id                String    @id @default(uuid()) @db.Uuid
+  workspaceId       String    @db.Uuid
+  importJobId       String    @db.Uuid
+  sourceColumnIndex Int
+  targetField       String?   @db.VarChar(64)
+  isIgnored         Boolean   @default(false)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  importJob         ImportJob @relation(fields: [workspaceId, importJobId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, importJobId, sourceColumnIndex])
+}
+
+model Task {
+  id                         String             @id @default(uuid()) @db.Uuid
+  workspaceId                String             @db.Uuid
+  leadId                     String?            @db.Uuid
+  leadContactId              String?            @db.Uuid
+  assigneeUserId             String             @db.Uuid
+  assignedByUserId           String             @db.Uuid
+  approvedByUserId           String?            @db.Uuid
+  suggestedProductInterestId String?            @db.Uuid
+  type                       TaskType
+  contactChannel             ContactChannel?
+  outcomeGoal                String             @db.VarChar(300)
+  estimatedMinutes           Int
+  dueAt                      DateTime           @db.Timestamptz(6)
+  status                     TaskStatus         @default(OPEN)
+  approvalStatus             TaskApprovalStatus @default(NOT_REQUIRED)
+  priorityReason             String?            @db.VarChar(300)
+  nextAction                 String?            @db.VarChar(500)
+  deferReason                String?            @db.VarChar(300)
+  cancelReason               String?            @db.VarChar(300)
+  completionOutcome          String?            @db.VarChar(1000)
+  suggestedService           String?            @db.VarChar(160)
+  approvedAt                 DateTime?          @db.Timestamptz(6)
+  completedAt                DateTime?          @db.Timestamptz(6)
+  predecessorId              String?            @db.Uuid
+  createdAt                  DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime           @updatedAt @db.Timestamptz(6)
+  workspace                  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead                       Lead?              @relation(fields: [workspaceId, leadId], references: [workspaceId, id], onDelete: Restrict)
+  leadContact                LeadContact?       @relation(fields: [workspaceId, leadContactId], references: [workspaceId, id], onDelete: Restrict)
+  assignee                   User               @relation("TaskAssignee", fields: [workspaceId, assigneeUserId], references: [workspaceId, id], onDelete: Restrict)
+  assignedBy                 User               @relation("TaskAssigner", fields: [workspaceId, assignedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  approvedBy                 User?              @relation("TaskApprover", fields: [workspaceId, approvedByUserId], references: [workspaceId, id], onDelete: Restrict)
+  suggestedProductInterest   ProductInterest?   @relation("TaskSuggestedService", fields: [workspaceId, suggestedProductInterestId], references: [workspaceId, id], onDelete: Restrict)
+  predecessor                Task?              @relation("TaskDependencies", fields: [workspaceId, predecessorId], references: [workspaceId, id], onDelete: Restrict)
+  successors                 Task[]             @relation("TaskDependencies")
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, assigneeUserId, dueAt, status])
+  @@index([workspaceId, assigneeUserId, approvalStatus, status])
+  @@index([workspaceId, leadId, status])
+  @@index([workspaceId, leadContactId, status])
+  @@index([workspaceId, status, dueAt])
+}
+
+model LockedTimeBlock {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  userId      String    @db.Uuid
+  startsAt    DateTime  @db.Timestamptz(6)
+  endsAt      DateTime  @db.Timestamptz(6)
+  label       String?   @db.VarChar(160)
+  reason      String?   @db.VarChar(300)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  user        User      @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, userId, startsAt, endsAt])
+}
+
+model AuditEvent {
+  id                         String                @id @default(uuid()) @db.Uuid
+  workspaceId                String                @db.Uuid
+  actorId                    String?               @db.Uuid
+  actorRole                  UserRole?
+  action                     String                @db.VarChar(80)
+  entityType                 String                @db.VarChar(80)
+  entityId                   String                @db.VarChar(60)
+  requestId                  String?               @db.VarChar(100)
+  jobId                      String?               @db.Uuid
+  changedFieldNames          String[]              @default([])
+  beforeStage                LeadStage?
+  afterStage                 LeadStage?
+  beforeContactabilityStatus ContactabilityStatus?
+  afterContactabilityStatus  ContactabilityStatus?
+  beforeConsentStatus        ConsentStatus?
+  afterConsentStatus         ConsentStatus?
+  outcome                    AuditOutcome          @default(SUCCESS)
+  createdAt                  DateTime              @default(now()) @db.Timestamptz(6)
+  workspace                  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actor                      User?                 @relation("AuditActor", fields: [workspaceId, actorId], references: [workspaceId, id], onDelete: Restrict)
+  consentRecord              ConsentRecord?
+  suppressionRecord          SuppressionRecord?
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, actorId, createdAt])
+  @@index([workspaceId, entityType, entityId, createdAt])
+  @@index([workspaceId, action, createdAt])
+  @@index([workspaceId, jobId])
+}
+
+model DataRetentionPolicy {
+  id               String              @id @default(uuid()) @db.Uuid
+  workspaceId      String              @db.Uuid
+  category         RetentionCategory
+  retentionDays    Int?
+  timeBasis        RetentionTimeBasis?
+  approvedByUserId String?             @db.Uuid
+  approvedAt       DateTime?           @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @db.Timestamptz(6)
+  workspace        Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  approvedBy       User?               @relation("RetentionApprover", fields: [workspaceId, approvedByUserId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, category])
+  @@index([workspaceId, retentionDays])
+}
+
+// Intentionally has no User foreign key: successful bootstrap remains recorded
+// if the initial Admin is later deactivated or otherwise removed.
+model AdminBootstrapState {
+  id          Int      @id @default(1) @db.SmallInt
+  adminUserId String   @db.Uuid
+  completedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model UserPasswordCredential {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @db.Uuid
+  userId       String    @db.Uuid
+  passwordHash String    @db.VarChar(512)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  user         User      @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, userId])
+}
+
+model AuthSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  userId      String    @db.Uuid
+  tokenHash   String    @unique @db.VarChar(64)
+  expiresAt   DateTime  @db.Timestamptz(6)
+  revokedAt   DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  user        User      @relation(fields: [workspaceId, userId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, userId, expiresAt])
+  @@index([workspaceId, revokedAt, expiresAt])
+}

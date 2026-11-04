@@ -1,0 +1,11 @@
+# Auth adapter (P0.2)
+
+`AuthAdapter` là contract provider-neutral chỉ resolve/revoke session và trả `AuthPrincipal`; `HttpAuthGuard` dùng contract này trước API handler. `LocalInvitationPort`, `LocalPasswordPort` và `MembershipAdministrationPort` là ports riêng của provisioning local; `LocalAuthAdapter` triển khai chúng cho local/staging. OIDC/SSO chỉ cần triển khai `AuthAdapter` và session/claim mapping; workflow lead/planner không phụ thuộc password provider. Role claims luôn lấy từ membership server-side; caller không được tự gửi role.
+
+Không có `signUp`/`register`: chỉ Admin hiện hữu mới tạo invitation. Link chứa secret ngẫu nhiên một lần; kho lưu SHA-256 hash, ngày hết hạn, workspace, role/team được mời và inviter. Repository phải tiêu thụ invite bằng thao tác conditional atomic (status `INVITED`, token hash khớp, `expiresAt > acceptedAt`) cùng tạo credential, kích hoạt account và audit trong một transaction. Token không được log.
+
+Local password hash dùng Argon2id qua `@noble/hashes` (pure JS, không native install script) để giữ nguyên policy hash trong sandbox. Đây là phương án local/staging; Noble ghi rõ Argon2 JS chậm hơn native và implementation Argon2 chưa nằm trong phạm vi audit ban đầu của thư viện. Không dùng local password provider cho pilot production; thay bằng OIDC/SSO đã được duyệt. Giới hạn verify chỉ nhận parameters được phát hành bởi implementation hiện tại. Nguồn: [Noble hashes Argon2 implementation](https://github.com/paulmillr/noble-hashes/blob/main/src/argon2.ts).
+
+Session token cũng là secret opaque một lần trả cho lớp HTTP; chỉ hash token được lưu. `HttpAuthGuard` là boundary framework-neutral: chỉ đọc cookie session, resolve identity qua `AuthAdapter`, bỏ qua bearer header, và trả 401 cho thiếu/hết hạn/không còn active. `requireRole` bảo vệ route theo role; `requireLeadAccess` ẩn ID ngoài scope bằng 404. `formatSessionCookie` đặt `HttpOnly`, `SameSite=Lax`, `Path=/`; secure mode dùng `__Host-` + `Secure` và không đặt `Domain`. Chưa có HTTP controllers/login/logout, CSRF middleware hay rate limiting; ứng dụng phải lắp chúng trước staging.
+
+Không gửi email hay Zalo từ package này. `createInvitation` trả link cho lớp admin đã xác thực để chuyển qua kênh được duyệt; token thô chỉ trả một lần.
