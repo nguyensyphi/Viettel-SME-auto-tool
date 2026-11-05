@@ -270,11 +270,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Create: `am-viettel-sme/packages/telegram-bot/src/alerts.ts`
 - Test: `am-viettel-sme/packages/telegram-bot/test/bot.test.ts`
 
-- [ ] **Step 1: Viết failing test xử lý lệnh `/dashboard`, `/jobs`, `/pause`, `/resume` và phát System Alert**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Telegram Bot qua Telegram Bot API (không gửi mật khẩu/QR qua bot)**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test xử lý lệnh `/dashboard`, `/jobs`, `/pause`, `/resume` và phát System Alert**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Telegram Bot qua Telegram Bot API (không gửi mật khẩu/QR qua bot)**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 

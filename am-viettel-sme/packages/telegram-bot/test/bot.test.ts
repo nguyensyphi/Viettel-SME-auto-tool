@@ -1,0 +1,127 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  InMemoryKillSwitchStore,
+  KillSwitchController,
+} from "@am-sme/config";
+import { TelegramAdminBot } from "../src/bot.js";
+import { TelegramAlertDispatcher } from "../src/alerts.js";
+
+describe("TelegramAdminBot & TelegramAlertDispatcher — Shared Core Operations (Task 13)", () => {
+  it("enforces fail-closed operator whitelist and handles /dashboard, /jobs, /pause, /resume", async () => {
+    const sentMessages: Array<{ chatId: string; text: string }> = [];
+    const transport = {
+      sendMessage: vi.fn(async (chatId: string, text: string) => {
+        sentMessages.push({ chatId, text });
+      }),
+    };
+
+    const killSwitch = new KillSwitchController(new InMemoryKillSwitchStore());
+
+    const bot = new TelegramAdminBot({
+      allowedOperatorIds: ["tg_admin_01"],
+      killSwitch,
+      transport,
+      getDashboardSnapshot: async () => ({
+        connectedAccounts: 3,
+        needsLoginAccounts: 1,
+        pendingReviewLeads: 14,
+        activeCampaigns: 2,
+      }),
+      getQueueJobsSnapshot: async () => ({
+        waiting: 5,
+        active: 1,
+        completed: 120,
+        failed: 2,
+        dlqCount: 1,
+      }),
+    });
+
+    const unauthorized = await bot.handleUpdate({
+      operatorId: "tg_stranger_99",
+      chatId: "chat_stranger",
+      text: "/pause Hack attempt",
+    });
+    expect(unauthorized.authorized).toBe(false);
+    expect(await killSwitch.isKillSwitchActive()).toBe(false);
+
+    const dashRes = await bot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "chat_admin",
+      text: "/dashboard",
+    });
+    expect(dashRes.authorized).toBe(true);
+    expect(dashRes.replyText).toContain("3");
+    expect(dashRes.replyText).toContain("NEEDS_LOGIN: 1");
+
+    const jobsRes = await bot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "chat_admin",
+      text: "/jobs",
+    });
+    expect(jobsRes.replyText).toContain("DLQ: 1");
+
+    await bot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "chat_admin",
+      text: "/pause Zalo checkpoint spike",
+    });
+    expect(await killSwitch.isKillSwitchActive()).toBe(true);
+
+    await bot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "chat_admin",
+      text: "/resume",
+    });
+    expect(await killSwitch.isKillSwitchActive()).toBe(false);
+    expect(sentMessages.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("dispatches system alerts (NEEDS_LOGIN, CIRCUIT_OPEN) and strictly blocks passwords, QR images, or raw PII", async () => {
+    const sentMessages: Array<{ chatId: string; text: string }> = [];
+    const transport = {
+      sendMessage: vi.fn(async (chatId: string, text: string) => {
+        sentMessages.push({ chatId, text });
+      }),
+    };
+
+    const alerts = new TelegramAlertDispatcher({
+      adminChatIds: ["chat_admin"],
+      transport,
+    });
+
+    await alerts.sendSystemAlert({
+      type: "NEEDS_LOGIN",
+      accountId: "am_01",
+      platform: "ZALO",
+      detail: "Phiên đăng nhập Zalo hết hạn, vui lòng mở Web Dashboard trên máy trạm để quét lại mã.",
+    });
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]?.text).toContain("NEEDS_LOGIN");
+    expect(sentMessages[0]?.text).toContain("am_01");
+
+    await expect(
+      alerts.sendSystemAlert({
+        type: "SECURITY_WARNING",
+        accountId: "am_01",
+        detail: "Mật khẩu đăng nhập là password: Secret123!",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    await expect(
+      alerts.sendSystemAlert({
+        type: "NEEDS_LOGIN",
+        accountId: "am_01",
+        detail: "Quét QR tại data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    await expect(
+      alerts.sendSystemAlert({
+        type: "DLQ_JOB",
+        accountId: "am_01",
+        detail: "Khách hàng CCCD 079091234567 lỗi gửi tin",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+  });
+});

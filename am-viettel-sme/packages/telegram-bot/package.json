@@ -1,0 +1,14 @@
+{
+  "name": "@am-sme/telegram-bot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bot": "./src/bot.ts",
+    "./alerts": "./src/alerts.ts"
+  },
+  "dependencies": {
+    "@am-sme/config": "workspace:*"
+  }
+}
