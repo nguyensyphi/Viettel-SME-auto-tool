@@ -1,0 +1,15 @@
+{
+  "name": "@am-sme/campaigns",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./group-manager": "./src/group-manager.ts",
+    "./campaign-manager": "./src/campaign-manager.ts"
+  },
+  "dependencies": {
+    "@am-sme/config": "workspace:*",
+    "@am-sme/excel-import": "workspace:*"
+  }
+}

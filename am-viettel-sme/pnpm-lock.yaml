@@ -113,6 +113,15 @@ importers:
         specifier: ^1.51.0
         version: 1.64.1
 
+  packages/campaigns:
+    dependencies:
+      '@am-sme/config':
+        specifier: workspace:*
+        version: link:../config
+      '@am-sme/excel-import':
+        specifier: workspace:*
+        version: link:../excel-import
+
   packages/config: {}
 
   packages/content-library: {}
