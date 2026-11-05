@@ -3,8 +3,16 @@ import {
   type ContactTaskEligibilityInput,
   type ContactTaskBlockReason,
 } from "../contactability/policy.js";
+import type { AmConfirmedProfile } from "../review/am-confirmation.js";
+import {
+  defaultTemplateFor,
+  getTemplate,
+  renderTemplate,
+  type MessageTemplate,
+  type TemplateChannel,
+} from "./templates.js";
 
-export type OutreachChannel = "SMS" | "ZALO" | "EMAIL" | "CALL_SCRIPT";
+export type OutreachChannel = TemplateChannel;
 
 export interface AmProfile {
   fullName: string;
@@ -15,88 +23,89 @@ export interface AmProfile {
 export interface OutreachMessageRequest {
   channel: OutreachChannel;
   businessName: string;
-  contactName?: string;
+  contactName?: string | undefined;
   serviceOffering: string;
   amProfile: AmProfile;
   eligibilityInput: ContactTaskEligibilityInput;
+  /** Required: engine suggestions are never used without AM confirmation. */
+  amConfirmation?: AmConfirmedProfile | undefined;
+  templateId?: string | undefined;
 }
 
-export type OutreachMessageResult =
-  | { allowed: true; messageText: string; channel: OutreachChannel }
-  | { allowed: false; blockReason: ContactTaskBlockReason };
+export type OutreachBlockReason =
+  | ContactTaskBlockReason
+  | "AM_CONFIRMATION_MISSING"
+  | "SERVICE_NOT_CONFIRMED";
 
+export type OutreachMessageResult =
+  | {
+      allowed: true;
+      messageText: string;
+      channel: OutreachChannel;
+      templateId: string;
+      approvalStatus: MessageTemplate["approvalStatus"];
+    }
+  | { allowed: false; blockReason: OutreachBlockReason };
+
+const SERVICE_NAMES: Record<string, string> = {
+  VIETTEL_CA: "Chữ ký số Viettel CA",
+  HOA_DON_DIEN_TU: "Hóa đơn điện tử",
+  VTRACKING: "giám sát hành trình vTracking",
+  CAMERA_ND10: "camera giám sát phương tiện",
+  FTTH: "Internet cáp quang doanh nghiệp",
+  TENDOO: "quản lý bán hàng Tendoo",
+  EASYBOOKS: "kế toán EasyBooks",
+  MYSIGN: "ký số từ xa MySign",
+  VCONTRACT: "hợp đồng điện tử vContract",
+  DMS_4_0: "quản lý kênh phân phối DMS",
+  OFFICE_1: "quản trị doanh nghiệp 1Office",
+  M2M_IOT: "kết nối thiết bị M2M/IoT",
+  VOICE_BRANDNAME: "cuộc gọi thương hiệu Voice Brandname",
+};
+
+/**
+ * Produces a DRAFT message for AM review. Never sends. Gate order:
+ * 1) contactability (fail-closed, opt-out always wins), 2) AM confirmation.
+ */
 export function generateOutreachMessage(
   request: OutreachMessageRequest,
 ): OutreachMessageResult {
-  // CRITICAL FAIL-CLOSED GATE: Check contactability eligibility before generating any text
   const eligibility = evaluateContactTaskEligibility(request.eligibilityInput);
   if (!eligibility.allowed) {
-    return {
-      allowed: false,
-      blockReason: eligibility.reason,
-    };
+    return { allowed: false, blockReason: eligibility.reason };
   }
 
-  const contactGreeting = request.contactName ? request.contactName : "Quý Doanh nghiệp";
-  const businessName = request.businessName.trim();
-  const am = request.amProfile;
-
-  let serviceDescription = "";
-  switch (request.serviceOffering) {
-    case "VIETTEL_CA":
-      serviceDescription = "giải pháp Chữ ký số Viettel CA hỗ trợ kê khai thuế, hải quan và ký số điện tử";
-      break;
-    case "HOA_DON_DIEN_TU":
-      serviceDescription = "giải pháp Hóa đơn điện tử Sinvoice và hóa đơn từ máy tính tiền";
-      break;
-    case "VTRACKING":
-      serviceDescription = "thiết bị giám sát hành trình vTracking và camera Nghị định 10 cho phương tiện";
-      break;
-    case "FTTH":
-      serviceDescription = "đường truyền Internet cáp quang doanh nghiệp FTTH băng thông cao";
-      break;
-    default:
-      serviceDescription = "các giải pháp chuyển đổi số dành cho doanh nghiệp SME của Viettel";
-      break;
+  if (!request.amConfirmation || request.amConfirmation.source !== "AM_CONFIRMED") {
+    return { allowed: false, blockReason: "AM_CONFIRMATION_MISSING" };
   }
 
-  let text = "";
-
-  if (request.channel === "SMS") {
-    // Concise SMS format with AM signature and mandatory opt-out syntax
-    text = `Viettel kinh gui ${businessName}: Dong hanh cung doanh nghiep voi ${request.serviceOffering === "VIETTEL_CA" ? "Viettel CA" : "giai phap so Viettel"}. Chi tiet lien he AM ${am.fullName} - ${am.phoneNumber}. Tu choi quang cao, soan TC gui 1313.`;
-  } else if (request.channel === "ZALO") {
-    // Polite and professional Zalo message format
-    text =
-      `Kính gửi ${contactGreeting} - ${businessName},\n\n` +
-      `Em là ${am.fullName} từ Viettel SME. Em xin phép gửi thông tin giới thiệu về ${serviceDescription} với chính sách ưu đãi hỗ trợ doanh nghiệp.\n\n` +
-      `Nếu ${contactGreeting} đang có nhu cầu tư vấn hoặc demo giải pháp, em sẵn sàng hỗ trợ trực tiếp.\n\n` +
-      `Trân trọng,\n` +
-      `${am.fullName} - ${am.title}\n` +
-      `Hotline/Zalo: ${am.phoneNumber}\n\n` +
-      `---\n` +
-      `(Nếu không có nhu cầu, ${contactGreeting} vui lòng nhắn 'Dừng' để hệ thống không tiếp tục gửi thông tin).`;
-  } else if (request.channel === "EMAIL") {
-    text =
-      `Kính gửi: Ban Giám đốc và Phụ trách ${businessName},\n\n` +
-      `Viettel xin trân trọng giới thiệu đến Quý Doanh nghiệp ${serviceDescription}.\n\n` +
-      `Chúng tôi cam kết mang lại giải pháp công nghệ ổn định, tuân thủ quy định pháp luật với chi phí tối ưu nhất cho doanh nghiệp.\n\n` +
-      `Để đặt lịch tư vấn và dùng thử, xin vui lòng liên hệ:\n` +
-      `${am.fullName} - ${am.title}\n` +
-      `Số điện thoại: ${am.phoneNumber}\n\n` +
-      `Trân trọng cảm ơn Quý Khách hàng!\n\n` +
-      `[Từ chối nhận email tiếp thị: Nhấn vào liên kết hủy đăng ký bên dưới]`;
-  } else {
-    // CALL_SCRIPT
-    text =
-      `[Lời thoại AM chào hỏi]: Kính chào ${contactGreeting} của đơn vị ${businessName}. ` +
-      `Em là ${am.fullName}, chuyên viên khách hàng doanh nghiệp Viettel. ` +
-      `Em gọi điện để hỗ trợ tư vấn ${serviceDescription} cho doanh nghiệp mình ạ.`;
+  if (!request.amConfirmation.services.includes(request.serviceOffering)) {
+    return { allowed: false, blockReason: "SERVICE_NOT_CONFIRMED" };
   }
+
+  const template = request.templateId
+    ? getTemplate(request.templateId)
+    : defaultTemplateFor(request.channel);
+  if (template.channel !== request.channel) {
+    throw new Error(
+      `Template ${template.templateId} is for channel ${template.channel}, not ${request.channel}`,
+    );
+  }
+
+  const messageText = renderTemplate(template, {
+    contactGreeting: request.contactName?.trim() || "Quý khách",
+    businessName: request.businessName,
+    serviceName: SERVICE_NAMES[request.serviceOffering] ?? "chuyển đổi số doanh nghiệp",
+    amName: request.amProfile.fullName,
+    amTitle: request.amProfile.title,
+    amPhone: request.amProfile.phoneNumber,
+  });
 
   return {
     allowed: true,
-    messageText: text,
+    messageText,
     channel: request.channel,
+    templateId: template.templateId,
+    approvalStatus: template.approvalStatus,
   };
 }

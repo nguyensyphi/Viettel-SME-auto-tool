@@ -119,8 +119,8 @@ describe("Queue & Job Safety Core", () => {
 
     it("throws error if job is missing mandatory idempotencyKey", async () => {
       await expect(
+        // @ts-expect-error testing missing idempotencyKey
         queueManager.submitJob("outreach-queue", {
-          // @ts-expect-error testing missing idempotencyKey
           payload: { leadId: "lead-999" },
         }),
       ).rejects.toThrow(/idempotencyKey is required/i);

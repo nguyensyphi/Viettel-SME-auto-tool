@@ -16,10 +16,18 @@ export interface ProductMatch {
   painPointsAddressed: string[];
   policyStatus: "CAN_XAC_NHAN_LAI" | "CURRENT_CONFIRMED";
   requiredConfirmations: string[];
+  /** P0 rule: suggestion only; AM must confirm before outreach. */
+  suggestionStatus: "PENDING_AM_REVIEW";
 }
 
+type RawProductMatch = Omit<ProductMatch, "suggestionStatus">;
+
 export function matchProductsForCustomer(input: ProductMatchInput): ProductMatch[] {
-  const matches: ProductMatch[] = [];
+  return matchRaw(input).map((m) => ({ ...m, suggestionStatus: "PENDING_AM_REVIEW" }));
+}
+
+function matchRaw(input: ProductMatchInput): RawProductMatch[] {
+  const matches: RawProductMatch[] = [];
 
   switch (input.segment) {
     case CustomerSegment.NEW_ESTABLISHED: {

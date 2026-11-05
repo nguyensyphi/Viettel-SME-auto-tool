@@ -26,9 +26,22 @@ export interface ClassificationResult {
   policyStatus: "CAN_XAC_NHAN_LAI" | "CURRENT_CONFIRMED";
   suggestedCta: string;
   inferredHeadcount?: undefined;
+  /** P0 rule: matrix output is reference only; AM must confirm before use. */
+  suggestionStatus: "PENDING_AM_REVIEW";
+  autoAssigned: false;
 }
 
+type RawClassification = Omit<ClassificationResult, "suggestionStatus" | "autoAssigned">;
+
 export function classifyCustomerLead(lead: CustomerLeadInput): ClassificationResult {
+  return {
+    ...classifyRaw(lead),
+    suggestionStatus: "PENDING_AM_REVIEW",
+    autoAssigned: false,
+  };
+}
+
+function classifyRaw(lead: CustomerLeadInput): RawClassification {
   const currentYear = new Date().getFullYear();
   const isRecentEstablishment =
     lead.isNewlyEstablished ||

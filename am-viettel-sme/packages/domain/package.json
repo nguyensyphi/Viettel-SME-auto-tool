@@ -8,6 +8,8 @@
     "./contactability": "./src/contactability/policy.ts",
     "./classification": "./src/classification/customer-classifier.ts",
     "./product-matching": "./src/product-matching/matcher.ts",
-    "./messaging": "./src/messaging/message-generator.ts"
+    "./messaging": "./src/messaging/message-generator.ts",
+    "./templates": "./src/messaging/templates.ts",
+    "./review": "./src/review/am-confirmation.ts"
   }
 }
