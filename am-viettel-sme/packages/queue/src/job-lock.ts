@@ -2,13 +2,32 @@ import crypto from "node:crypto";
 
 export interface LockResult {
   acquired: boolean;
-  token?: string;
+  token?: string | undefined;
   key: string;
 }
 
 export interface JobLockAdapter {
   acquire(key: string, token: string, ttlMs: number): Promise<boolean>;
   release(key: string, token: string): Promise<boolean>;
+}
+
+export interface RedisLockClient {
+  set(
+    key: string,
+    value: string,
+    pxMode: "PX",
+    ttlMs: number,
+    nxMode: "NX",
+  ): Promise<"OK" | null>;
+  eval(
+    script: string,
+    numkeys: number,
+    ...args: (string | number)[]
+  ): Promise<unknown>;
+}
+
+export interface RedisJobLockAdapterOptions {
+  keyPrefix?: string | undefined;
 }
 
 export class InMemoryJobLockAdapter implements JobLockAdapter {
@@ -45,7 +64,7 @@ export class InMemoryJobLockAdapter implements JobLockAdapter {
 }
 
 export class RedisJobLockAdapter implements JobLockAdapter {
-  // Lua script for atomic unlock only if token matches
+  // Atomic Lua unlock: deletes key only when caller owns the lock token
   private static readonly UNLOCK_SCRIPT = `
     if redis.call("get", KEYS[1]) == ARGV[1] then
       return redis.call("del", KEYS[1])
@@ -54,10 +73,17 @@ export class RedisJobLockAdapter implements JobLockAdapter {
     end
   `;
 
-  constructor(private readonly redisClient: any) {}
+  private readonly keyPrefix: string;
+
+  constructor(
+    private readonly redisClient: RedisLockClient,
+    options?: RedisJobLockAdapterOptions,
+  ) {
+    this.keyPrefix = options?.keyPrefix ?? "lock:";
+  }
 
   async acquire(key: string, token: string, ttlMs: number): Promise<boolean> {
-    const prefixedKey = `lock:${key}`;
+    const prefixedKey = `${this.keyPrefix}${key}`;
     const result = await this.redisClient.set(
       prefixedKey,
       token,
@@ -69,7 +95,7 @@ export class RedisJobLockAdapter implements JobLockAdapter {
   }
 
   async release(key: string, token: string): Promise<boolean> {
-    const prefixedKey = `lock:${key}`;
+    const prefixedKey = `${this.keyPrefix}${key}`;
     const result = await this.redisClient.eval(
       RedisJobLockAdapter.UNLOCK_SCRIPT,
       1,
@@ -84,21 +110,26 @@ export class JobLockManager {
   constructor(private readonly adapter: JobLockAdapter) {}
 
   async acquire(key: string, ttlMs: number): Promise<LockResult> {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      throw new Error("lock key must be a non-empty string");
+    }
+
     const token = crypto.randomUUID();
-    const acquired = await this.adapter.acquire(key, token, ttlMs);
+    const acquired = await this.adapter.acquire(normalizedKey, token, ttlMs);
 
     if (!acquired) {
-      return { acquired: false, key };
+      return { acquired: false, key: normalizedKey };
     }
 
     return {
       acquired: true,
       token,
-      key,
+      key: normalizedKey,
     };
   }
 
   async release(key: string, token: string): Promise<boolean> {
-    return this.adapter.release(key, token);
+    return this.adapter.release(key.trim(), token);
   }
 }

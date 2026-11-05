@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./job-lock": "./src/job-lock.ts",
-    "./queue-factory": "./src/queue-factory.ts"
+    "./queue-factory": "./src/queue-factory.ts",
+    "./bullmq-runtime": "./src/bullmq-runtime.ts"
   },
   "dependencies": {
     "bullmq": "^5.41.0",
