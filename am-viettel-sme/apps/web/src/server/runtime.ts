@@ -17,6 +17,7 @@ import {
   LeadWorkspaceRepository,
 } from "@am-sme/database/lead-workspace";
 import { TaskRepository } from "@am-sme/database/tasks";
+import { createDemoApiServices } from "./demo-services.js";
 import { InMemoryImportApi } from "./import-api.js";
 import { WorkspaceOperationsHub } from "./operations-hub.js";
 import type { ApiServices } from "./http-api.js";
@@ -38,6 +39,15 @@ function positiveIntegerEnv(name: string): number {
 
 export function getApiServices(): ApiServices {
   if (singleton) return singleton;
+  if (
+    process.env.DEMO_MODE === "true" ||
+    (process.env.APP_ENV === "local" &&
+      process.env.DATABASE_URL?.includes("change-me-local-only") &&
+      process.env.DEMO_MODE !== "false")
+  ) {
+    singleton = createDemoApiServices();
+    return singleton;
+  }
   const environment = loadEnvConfig(process.env);
   const appEnv = environment.appEnv;
   const databaseUrl = environment.databaseUrl;

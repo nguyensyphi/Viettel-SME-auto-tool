@@ -168,7 +168,19 @@ function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   try {
-    return new URL(origin).origin === new URL(request.url).origin;
+    const o = new URL(origin);
+    const r = new URL(request.url);
+    if (o.origin === r.origin) return true;
+    const loopbacks = new Set(["127.0.0.1", "localhost", "[::1]"]);
+    if (
+      loopbacks.has(o.hostname) &&
+      loopbacks.has(r.hostname) &&
+      o.port === r.port &&
+      o.protocol === r.protocol
+    ) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }

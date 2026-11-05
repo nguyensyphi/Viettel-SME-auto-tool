@@ -14,4 +14,5 @@ test-results/
 *.csv
 *.tsbuildinfo
 .DS_Store
+AGENTS.md
 packages/database/generated/
