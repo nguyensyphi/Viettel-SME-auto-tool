@@ -240,11 +240,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Create: `am-viettel-sme/packages/campaigns/src/campaign-manager.ts`
 - Test: `am-viettel-sme/packages/campaigns/test/campaign-manager.test.ts`
 
-- [ ] **Step 1: Viết failing test tạo chiến dịch tìm CTV, phân loại nhóm (Kế toán, Ngân hàng, Doanh nghiệp), kiểm tra quyền đăng bài của nhóm**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Group Manager và Campaign Manager**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test tạo chiến dịch tìm CTV, phân loại nhóm (Kế toán, Ngân hàng, Doanh nghiệp), kiểm tra quyền đăng bài của nhóm**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Group Manager và Campaign Manager**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -253,11 +253,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Create: `am-viettel-sme/packages/campaigns/src/partner-crm.ts`
 - Test: `am-viettel-sme/packages/campaigns/test/partner-crm.test.ts`
 
-- [ ] **Step 1: Viết failing test vòng đời CTV (`NEW -> CONTACTED -> ACTIVE_PARTNER`), đối soát doanh thu và hoa hồng**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Partner CRM service**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test vòng đời CTV (`NEW -> CONTACTED -> ACTIVE_PARTNER`), đối soát doanh thu và hoa hồng**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Partner CRM service**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
