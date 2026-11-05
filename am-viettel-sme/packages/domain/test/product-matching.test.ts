@@ -83,4 +83,25 @@ describe("Product Matching Engine (M01-06)", () => {
       expect(match.requiredConfirmations.length).toBeGreaterThan(0);
     }
   });
+
+  it("supports full 17-product matrix catalog including DI_DONG_TRA_SAU, VBHXH, EASY_HRM, VOFFICE and responds to scale/businessNeeds signals", () => {
+    const microMatches = matchProductsForCustomer({
+      segment: CustomerSegment.MICRO_INDIVIDUAL,
+      businessNeeds: ["di_dong", "bhxh"],
+      employeeCount: 12,
+    });
+    const microIds = microMatches.map((m) => m.serviceId);
+    expect(microIds).toContain("DI_DONG_TRA_SAU");
+    expect(microIds).toContain("VBHXH");
+
+    const enterpriseMatches = matchProductsForCustomer({
+      segment: CustomerSegment.MANUFACTURING_DISTRIBUTION,
+      employeeCount: 60,
+      branchCount: 3,
+      businessNeeds: ["nhan_su", "van_phong_dien_tu"],
+    });
+    const entIds = enterpriseMatches.map((m) => m.serviceId);
+    expect(entIds).toContain("EASY_HRM");
+    expect(entIds).toContain("VOFFICE");
+  });
 });

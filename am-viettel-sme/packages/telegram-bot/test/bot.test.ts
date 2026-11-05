@@ -123,6 +123,64 @@ describe("TelegramAdminBot & TelegramAlertDispatcher — Shared Core Operations 
         detail: "Khách hàng CCCD 079091234567 lỗi gửi tin",
       }),
     ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    // Also blocks Bearer tokens, Telegram bot tokens, QR image URLs, and DOB PII
+    await expect(
+      alerts.sendSystemAlert({
+        type: "SECURITY_WARNING",
+        detail: "Header Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    await expect(
+      alerts.sendSystemAlert({
+        type: "NEEDS_LOGIN",
+        detail: "Ảnh mã quét tại https://internal.local/qr-login-am01.png",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    await expect(
+      alerts.sendSystemAlert({
+        type: "DLQ_JOB",
+        detail: "Đại diện SN: 14/02/1988 lỗi đồng bộ",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+
+    // Enforces allowedChatIds allow-list even if operatorId is whitelisted
+    const chatGuardedBot = new TelegramAdminBot({
+      allowedOperatorIds: ["tg_admin_01"],
+      allowedChatIds: ["chat_admin_private"],
+      killSwitch: new KillSwitchController(new InMemoryKillSwitchStore()),
+      transport,
+      getDashboardSnapshot: async () => ({
+        connectedAccounts: 1,
+        needsLoginAccounts: 0,
+        pendingReviewLeads: 0,
+        activeCampaigns: 0,
+      }),
+      getQueueJobsSnapshot: async () => ({
+        waiting: 0,
+        active: 0,
+        completed: 0,
+        failed: 0,
+        dlqCount: 0,
+      }),
+    });
+
+    const unapprovedChat = await chatGuardedBot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "public_group_chat_999",
+      text: "/dashboard@am_sme_bot",
+    });
+    expect(unapprovedChat.authorized).toBe(false);
+
+    const approvedChatWithSuffix = await chatGuardedBot.handleUpdate({
+      operatorId: "tg_admin_01",
+      chatId: "chat_admin_private",
+      text: "/dashboard@am_sme_bot",
+    });
+    expect(approvedChatWithSuffix.authorized).toBe(true);
+    expect(approvedChatWithSuffix.command).toBe("/dashboard");
   });
 });
 

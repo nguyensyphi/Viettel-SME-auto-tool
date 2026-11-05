@@ -73,7 +73,7 @@ export interface CampaignManagerOptions {
 }
 
 const SENSITIVE_PII_PATTERN =
-  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\r]{0,25}\b\d{9,12}\b|\b0\d{11}\b)/iu;
+  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\r]{0,25}\b\d{9,12}\b|\b0\d{11}\b|\b(?:sn|sinh\s*ngày|ngày\s*sinh|dob|birthdate)\b[^\n\r]{0,20}\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)/iu;
 
 function assertNoSensitivePii(text: string): void {
   if (SENSITIVE_PII_PATTERN.test(text)) {
@@ -109,6 +109,9 @@ export class CampaignManager {
       throw new Error(
         "INVALID_CAMPAIGN_INPUT: campaignId, name, and contentTemplate are required",
       );
+    }
+    if (this.campaigns.has(campaignId)) {
+      throw new Error(`DUPLICATE_CAMPAIGN:${campaignId}`);
     }
     if (input.targetCategories.length === 0) {
       throw new Error(

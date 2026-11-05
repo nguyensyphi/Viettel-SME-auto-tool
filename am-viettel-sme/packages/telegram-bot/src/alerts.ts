@@ -37,10 +37,10 @@ export class TelegramHttpTransport implements TelegramTransport {
 }
 
 const SECRET_OR_QR_PATTERN =
-  /(?:\b(?:password|passwd|mật\s*khẩu|secret|bot_token|api[_-]?key)\s*[:=]|data:image\/[a-zA-Z0-9.+-]+;base64,)/iu;
+  /(?:\b(?:password|passwd|mật\s*khẩu|secret|bot_token|api[_-]?key)\s*[:=]|\bBearer\s+[A-Za-z0-9._~+/-]{8,}|\bbot\d{6,}:[A-Za-z0-9_-]{15,}|data:image\/[a-zA-Z0-9.+-]+;base64,|https?:\/\/\S*(?:qr|qrcode)\S*\.(?:png|jpg|jpeg|webp|svg)\b)/iu;
 
 const RAW_PII_PATTERN =
-  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\r]{0,25}\b\d{9,12}\b|\b0\d{11}\b)/iu;
+  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\r]{0,25}\b\d{9,12}\b|\b0\d{11}\b|\b(?:sn|sinh\s*ngày|ngày\s*sinh|dob|birthdate)\b[^\n\r]{0,20}\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)/iu;
 
 export function assertSafeTelegramText(text: string): void {
   if (SECRET_OR_QR_PATTERN.test(text) || RAW_PII_PATTERN.test(text)) {

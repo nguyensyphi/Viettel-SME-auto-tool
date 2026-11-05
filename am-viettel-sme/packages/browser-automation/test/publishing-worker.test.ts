@@ -255,5 +255,97 @@ describe("PublishingWorker — Playwright Full-Auto, Semi-Auto & Session Safety 
     expect(ksRes.status).toBe("HALTED_KILL_SWITCH");
     expect(launchSpy).not.toHaveBeenCalled();
   });
+
+  it("short-circuits known NEEDS_LOGIN/SUSPENDED sessions before launching browser, fails closed when file input is missing, and supports Vietnamese FB selectors", async () => {
+    const launchSpy = vi.fn();
+    const profileManager = new BrowserProfileManager({
+      storageRootDir: tempDir,
+      launcher: { launchPersistentContext: launchSpy },
+    });
+    const sessionStore = new InMemoryAccountSessionStore();
+    await sessionStore.setStatus("am_known_expired", "ZALO", "NEEDS_LOGIN", "QR_EXPIRED");
+
+    const workerPreCheck = new PublishingWorker({
+      profileManager,
+      sessionStore,
+      evidenceDir: path.join(tempDir, "evidence"),
+    });
+
+    const preRes = await workerPreCheck.executePublishingJob({
+      jobId: "job-precheck",
+      accountId: "am_known_expired",
+      platform: "ZALO",
+      contentId: "POST-PRE",
+      content: "Không mở Chromium khi đã biết NEEDS_LOGIN",
+      mode: "FULL_AUTO",
+    });
+    expect(preRes.status).toBe("NEEDS_LOGIN");
+    expect(launchSpy).not.toHaveBeenCalled();
+
+    // Fail-closed when mediaPaths is provided but input[type='file'] is missing
+    const noFileInputMock = createPublisherMockPage({
+      url: "https://www.facebook.com/",
+      visibleSelectors: [
+        "[role='navigation']",
+        "[role='button'][aria-label*='Bạn đang nghĩ gì']",
+        "[role='textbox']",
+        "[aria-label='Đăng']",
+      ],
+    });
+    const noFileCtx = wrapContext(noFileInputMock.page);
+    const workerMediaGuard = new PublishingWorker({
+      profileManager: new BrowserProfileManager({
+        storageRootDir: tempDir,
+        launcher: { launchPersistentContext: vi.fn(async () => noFileCtx) },
+      }),
+      sessionStore: new InMemoryAccountSessionStore(),
+      evidenceDir: path.join(tempDir, "evidence"),
+    });
+
+    const missingInputRes = await workerMediaGuard.executePublishingJob({
+      jobId: "job-missing-file-input",
+      accountId: "am_vn_fb",
+      platform: "FACEBOOK",
+      contentId: "POST-MEDIA-FAIL",
+      content: "Bài bắt buộc có ảnh nhưng thiếu input file",
+      mediaPaths: [sampleImagePath],
+      mode: "FULL_AUTO",
+    });
+    expect(missingInputRes.status).toBe("FAILED");
+    expect(missingInputRes.reason).toMatch(/FILE_INPUT_NOT_FOUND/);
+
+    // Vietnamese Facebook selectors succeed when input[type='file'] is present
+    const vnFbMock = createPublisherMockPage({
+      url: "https://www.facebook.com/",
+      visibleSelectors: [
+        "[role='navigation']",
+        "[role='button'][aria-label*='Bạn đang nghĩ gì']",
+        "[role='textbox']",
+        "input[type='file']",
+        "[aria-label='Đăng']",
+      ],
+    });
+    const vnFbCtx = wrapContext(vnFbMock.page);
+    const workerVnFb = new PublishingWorker({
+      profileManager: new BrowserProfileManager({
+        storageRootDir: tempDir,
+        launcher: { launchPersistentContext: vi.fn(async () => vnFbCtx) },
+      }),
+      sessionStore: new InMemoryAccountSessionStore(),
+      evidenceDir: path.join(tempDir, "evidence"),
+    });
+
+    const vnRes = await workerVnFb.executePublishingJob({
+      jobId: "job-vn-fb-ok",
+      accountId: "am_vn_fb_2",
+      platform: "FACEBOOK",
+      contentId: "POST-VN-FB",
+      content: "Đăng bài trên giao diện Facebook tiếng Việt",
+      mediaPaths: [sampleImagePath],
+      mode: "FULL_AUTO",
+    });
+    expect(vnRes.status).toBe("PUBLISHED");
+    expect(vnFbMock.clickedSelectors).toContain("[aria-label='Đăng']");
+  });
 });
 

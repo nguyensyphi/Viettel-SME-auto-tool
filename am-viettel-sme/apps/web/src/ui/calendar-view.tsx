@@ -9,6 +9,7 @@ export interface PublishingCalendarItem {
     | "APPROVED"
     | "SCHEDULED"
     | "PUBLISHED"
+    | "FAILED"
     | "AWAITING_AM_CONFIRMATION"
     | "NEEDS_LOGIN";
   readonly mode: "FULL_AUTO" | "SEMI_AUTO";

@@ -14,7 +14,25 @@ import {
 
 const TEST_REDIS_URL = process.env["TEST_REDIS_URL"] ?? "redis://127.0.0.1:6379/15";
 
-describe("Real Redis & BullMQ Queue Safety Integration", () => {
+const redisAvailable = await (async () => {
+  try {
+    const probe = new Redis(TEST_REDIS_URL, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 300,
+      lazyConnect: true,
+      retryStrategy: () => null,
+    });
+    probe.on("error", () => {});
+    await probe.connect();
+    const res = await probe.ping();
+    await probe.quit();
+    return res === "PONG";
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!redisAvailable)("Real Redis & BullMQ Queue Safety Integration", () => {
   let redisA: Redis;
   let redisB: Redis;
   const runPrefix = `am-test-${crypto.randomUUID().slice(0, 8)}`;
@@ -340,6 +358,91 @@ describe("Real Redis & BullMQ Queue Safety Integration", () => {
           }),
         ).rejects.toThrow(/KILL_SWITCH_ACTIVE/i);
       } finally {
+        await runtime.close();
+      }
+    });
+
+    it("preserves waiting jobs during Kill Switch /pause without DLQ drain and executes after /resume, cleans idempKey on add failure, and renews JobLock", async () => {
+      const pausePrefix = `${runPrefix}-pause`;
+      const queueName = `pause-safe-${crypto.randomUUID().slice(0, 6)}`;
+      const killSwitch = new KillSwitchController(
+        new RedisKillSwitchStore(redisA, { keyPrefix: `${pausePrefix}:` }),
+      );
+
+      const runtime = new BullMqQueueRuntime({
+        redisUrl: TEST_REDIS_URL,
+        prefix: pausePrefix,
+        defaultBackoffMs: 25,
+        lockContentionDelayMs: 60,
+        enableBuiltInSafetyControls: true,
+      });
+
+      const executedIds: string[] = [];
+      let concurrentCount = 0;
+      let maxConcurrent = 0;
+
+      try {
+        // 1. Enqueue a job BEFORE worker starts, then activate Kill Switch (/pause), then register worker!
+        await runtime.enqueue(queueName, {
+          idempotencyKey: "queued-before-pause",
+          lockKey: "account:am-pause-1",
+          accountId: "am-pause-1",
+          payload: { id: "job-preserved", sleepMs: 20 },
+        });
+
+        await killSwitch.activateKillSwitch("Maintenance window", "admin-1");
+
+        await runtime.registerWorker<{ id: string; sleepMs: number }>(
+          queueName,
+          async (data) => {
+            concurrentCount += 1;
+            maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+            await new Promise((r) => setTimeout(r, data.sleepMs));
+            concurrentCount -= 1;
+            executedIds.push(data.id);
+          },
+          { concurrency: 2, lockTtlMs: 80 },
+        );
+
+        // Wait 250ms while Kill Switch is active: job MUST NOT be executed and MUST NOT be drained into DLQ!
+        await new Promise((r) => setTimeout(r, 250));
+        expect(executedIds).toEqual([]);
+        expect(await runtime.getDeadLetterJobs(queueName)).toHaveLength(0);
+
+        // Resume Kill Switch -> preserved job executes cleanly!
+        await killSwitch.deactivateKillSwitch("admin-1");
+        const resumeDeadline = Date.now() + 3_000;
+        while (!executedIds.includes("job-preserved") && Date.now() < resumeDeadline) {
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        expect(executedIds).toContain("job-preserved");
+        expect(await runtime.getDeadLetterJobs(queueName)).toHaveLength(0);
+
+        // 2. JobLock renewal: job running 220ms with lockTtlMs=80ms must keep renewing lock so parallel job waits!
+        await Promise.all([
+          runtime.enqueue(queueName, {
+            idempotencyKey: "long-lock-1",
+            lockKey: "account:am-renew",
+            payload: { id: "long-1", sleepMs: 220 },
+          }),
+          runtime.enqueue(queueName, {
+            idempotencyKey: "long-lock-2",
+            lockKey: "account:am-renew",
+            payload: { id: "long-2", sleepMs: 40 },
+          }),
+        ]);
+
+        const renewDeadline = Date.now() + 4_000;
+        while (
+          (!executedIds.includes("long-1") || !executedIds.includes("long-2")) &&
+          Date.now() < renewDeadline
+        ) {
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        expect(maxConcurrent).toBe(1);
+      } finally {
+        const pauseKeys = await redisA.keys(`${pausePrefix}*`);
+        if (pauseKeys.length > 0) await redisA.del(...pauseKeys);
         await runtime.close();
       }
     });

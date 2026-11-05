@@ -17,6 +17,7 @@ import type {
 import type { TaskRepository as TasksRepository } from "@am-sme/database/tasks";
 import type { DeduplicationLead } from "@am-sme/excel-import";
 import type { InMemoryImportApi } from "./import-api.js";
+import { WorkspaceOperationsHub } from "./operations-hub.js";
 
 export interface SqlPort {
   query<T>(sql: string, values?: readonly unknown[]): Promise<T[]>;
@@ -31,10 +32,26 @@ export interface ApiServices {
   readonly tasks: TasksRepository;
   readonly imports: InMemoryImportApi;
   readonly db: SqlPort;
+  readonly operations?: WorkspaceOperationsHub | undefined;
   readonly sessionCookie: {
     readonly secure: boolean;
     readonly maxAgeSeconds: number;
   };
+}
+
+const fallbackOperationsByServices = new WeakMap<
+  ApiServices,
+  WorkspaceOperationsHub
+>();
+
+function operationsFor(services: ApiServices): WorkspaceOperationsHub {
+  if (services.operations) return services.operations;
+  let hub = fallbackOperationsByServices.get(services);
+  if (!hub) {
+    hub = new WorkspaceOperationsHub();
+    fallbackOperationsByServices.set(services, hub);
+  }
+  return hub;
 }
 
 const jsonHeaders = {
@@ -1069,6 +1086,102 @@ export async function handleApiRequest(
           },
         );
       return response({ items: rows, limit, offset });
+    }
+
+    const operations = operationsFor(services);
+
+    if (area === "social-accounts" && rest.length === 0 && method === "GET") {
+      return response({
+        items: operations.listSocialAccounts(principal.workspaceId),
+      });
+    }
+    if (
+      area === "social-accounts" &&
+      rest[0] &&
+      rest[1] === "qr-login" &&
+      rest.length === 2 &&
+      method === "POST"
+    ) {
+      const body = await jsonBody(request);
+      assertFields(body, ["platform"]);
+      const platform = requiredString(body.platform);
+      if (platform !== "ZALO" && platform !== "FACEBOOK") {
+        throw new Error("INVALID_PLATFORM");
+      }
+      return response(
+        operations.requestQrLogin(
+          principal.workspaceId,
+          rest[0],
+          platform,
+          principal.userId,
+        ),
+      );
+    }
+
+    if (
+      area === "publishing-calendar" &&
+      rest.length === 0 &&
+      method === "GET"
+    ) {
+      return response({
+        items: operations.listCalendarPosts(principal.workspaceId),
+      });
+    }
+    if (
+      area === "publishing-calendar" &&
+      rest.length === 0 &&
+      method === "POST"
+    ) {
+      const body = await jsonBody(request);
+      assertFields(body, [
+        "contentId",
+        "topic",
+        "platform",
+        "mode",
+        "publishTime",
+        "content",
+      ]);
+      const platform = requiredString(body.platform);
+      if (platform !== "ZALO" && platform !== "FACEBOOK") {
+        throw new Error("INVALID_PLATFORM");
+      }
+      const mode = requiredString(body.mode);
+      if (mode !== "FULL_AUTO" && mode !== "SEMI_AUTO") {
+        throw new Error("INVALID_MODE");
+      }
+      const created = operations.createCalendarDraft(principal.workspaceId, {
+        contentId: requiredString(body.contentId),
+        topic: requiredString(body.topic),
+        platform,
+        mode,
+        publishTime: requiredString(body.publishTime),
+        content: requiredString(body.content),
+      });
+      return response(created, 201);
+    }
+    if (
+      area === "publishing-calendar" &&
+      rest[0] &&
+      rest[1] === "approve" &&
+      rest.length === 2 &&
+      method === "POST"
+    ) {
+      const body = await jsonBody(request);
+      assertFields(body, []);
+      const approved = operations.approveCalendarPost(
+        principal.workspaceId,
+        rest[0],
+        principal.userId,
+      );
+      return response(approved);
+    }
+
+    if (
+      area === "campaigns-overview" &&
+      rest.length === 0 &&
+      method === "GET"
+    ) {
+      return response(operations.getCampaignsOverview(principal.workspaceId));
     }
 
     return response({ error: "NOT_FOUND" }, 404);

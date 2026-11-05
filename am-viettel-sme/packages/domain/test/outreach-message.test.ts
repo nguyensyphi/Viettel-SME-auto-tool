@@ -114,4 +114,16 @@ describe("Outreach Message Generator (M01-07)", () => {
   it("rejects a template id whose channel does not match", () => {
     expect(() => generateOutreachMessage(req({ templateId: "SMS_INTRO_V1" }))).toThrow(/channel/i);
   });
+
+  it("renders dedicated Vietnamese service names for DI_DONG_TRA_SAU, VBHXH, EASY_HRM, and VOFFICE", () => {
+    for (const svc of ["DI_DONG_TRA_SAU", "VBHXH", "EASY_HRM", "VOFFICE"]) {
+      const res = generateOutreachMessage(
+        req({ serviceOffering: svc, amConfirmation: confirmation([svc]) }),
+      );
+      expect(res.allowed).toBe(true);
+      if (res.allowed) {
+        expect(res.messageText).not.toContain("chuyển đổi số doanh nghiệp");
+      }
+    }
+  });
 });

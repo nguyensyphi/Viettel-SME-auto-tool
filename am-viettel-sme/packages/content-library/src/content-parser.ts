@@ -17,9 +17,9 @@ export interface ParsedPost {
 }
 
 const ALLOWED_PLATFORMS = new Set<PublishPlatform>(["ZALO", "FACEBOOK"]);
-// Detects CCCD (12 digits) or CMND (9 digits) patterns preceded by ID keywords or standalone 12-digit IDs
+// Detects CCCD (12 digits), CMND (9 digits), or birth dates (SN / ngày sinh / DOB)
 const PII_ID_PATTERN =
-  /(?:\b(?:cccd|cmnd|căn cước|chứng minh)\b[^\n\d]{0,15}\d{9,12}\b|\b0\d{11}\b)/i;
+  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\d]{0,15}\d{9,12}\b|\b0\d{11}\b|\b(?:sn|sinh\s*ngày|ngày\s*sinh|dob|birthdate)\b[^\n\r]{0,20}\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)/iu;
 
 export function parseStructuredPosts(rawText: string): ParsedPost[] {
   const blocks = rawText

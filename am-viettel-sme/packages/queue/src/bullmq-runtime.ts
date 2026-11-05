@@ -208,16 +208,21 @@ export class BullMqQueueRuntime {
     };
 
     const queue = this.getOrCreateQueue(queueName);
-    await queue.add(input.jobName ?? "execute", envelope, {
-      jobId,
-      attempts,
-      backoff: {
-        type: "exponential",
-        delay: backoffDelay,
-      },
-      removeOnComplete: 100,
-      removeOnFail: 200,
-    });
+    try {
+      await queue.add(input.jobName ?? "execute", envelope, {
+        jobId,
+        attempts,
+        backoff: {
+          type: "exponential",
+          delay: backoffDelay,
+        },
+        removeOnComplete: 100,
+        removeOnFail: 200,
+      });
+    } catch (err) {
+      await this.sharedRedis.del(idempRedisKey).catch(() => undefined);
+      throw err;
+    }
 
     return { status: "enqueued", jobId };
   }
@@ -230,14 +235,21 @@ export class BullMqQueueRuntime {
     const workerConn = new Redis(this.redisUrl, { maxRetriesPerRequest: null });
     this.extraConnections.push(workerConn);
 
-    const lockTtlMs = options?.lockTtlMs ?? 30_000;
+    const lockTtlMs = options?.lockTtlMs ?? 180_000;
     const dlqQueue = this.getOrCreateQueue(this.getDlqName(queueName));
 
     const worker = new Worker<ProtectedJobEnvelope<T>>(
       queueName,
       async (job, bullToken) => {
         if (this.killSwitch && (await this.killSwitch.isKillSwitchActive())) {
-          throw new UnrecoverableError("KILL_SWITCH_ACTIVE: worker halted");
+          if (bullToken) {
+            await job.moveToDelayed(
+              Date.now() + Math.max(this.lockContentionDelayMs, 100),
+              bullToken,
+            );
+            throw new DelayedError();
+          }
+          throw new Error("KILL_SWITCH_ACTIVE: worker paused");
         }
 
         const lockKey = job.data.lockKey;
@@ -262,6 +274,15 @@ export class BullMqQueueRuntime {
           throw new Error(`JOB_LOCK_CONTENTION:${lockKey}`);
         }
 
+        const lockToken = lock.token;
+        const renewIntervalMs = Math.max(20, Math.floor(lockTtlMs / 2));
+        const renewTimer = setInterval(() => {
+          void this.lockManager
+            .renew(lockKey, lockToken, lockTtlMs)
+            .catch(() => undefined);
+        }, renewIntervalMs);
+        renewTimer.unref?.();
+
         try {
           await handler(job.data.payload, job);
           if (this.circuitBreaker && accountId) {
@@ -282,7 +303,8 @@ export class BullMqQueueRuntime {
           }
           throw err;
         } finally {
-          await this.lockManager.release(lockKey, lock.token);
+          clearInterval(renewTimer);
+          await this.lockManager.release(lockKey, lockToken);
         }
       },
       {

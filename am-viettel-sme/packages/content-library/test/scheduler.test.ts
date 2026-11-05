@@ -121,6 +121,47 @@ describe("Media Matcher & Publishing Scheduler (Task 9)", () => {
       );
       expect(scheduled.jobSpec.mediaPaths).toEqual(["/tmp/a1.png"]);
     });
+
+    it("allows scheduling an approved multi-platform post across both ZALO and FACEBOOK while rejecting duplicate (accountId, platform) schedules", () => {
+      const scheduler = new PublishingScheduler();
+      const post: ParsedPost = {
+        contentId: "POST-MULTI-01",
+        topic: "CHU_KY_SO",
+        mediaRequired: false,
+        platforms: ["ZALO", "FACEBOOK"],
+        content: "Bài đăng đa nền tảng Zalo & Facebook",
+        lifecycleStatus: "DRAFT",
+      };
+
+      scheduler.registerDraft(post, sampleAssets);
+      scheduler.approvePost("POST-MULTI-01", "am_user_01");
+
+      const sZalo = scheduler.schedulePost(
+        "POST-MULTI-01",
+        "am_01",
+        "ZALO",
+        new Date("2026-11-06T09:00:00.000Z"),
+      );
+      expect(sZalo.post.lifecycleStatus).toBe("SCHEDULED");
+
+      const sFb = scheduler.schedulePost(
+        "POST-MULTI-01",
+        "am_01",
+        "FACEBOOK",
+        new Date("2026-11-06T09:30:00.000Z"),
+      );
+      expect(sFb.post.lifecycleStatus).toBe("SCHEDULED");
+      expect(sFb.jobSpec.platform).toBe("FACEBOOK");
+
+      expect(() =>
+        scheduler.schedulePost(
+          "POST-MULTI-01",
+          "am_01",
+          "ZALO",
+          new Date("2026-11-06T09:00:00.000Z"),
+        ),
+      ).toThrow(/DUPLICATE_SCHEDULE/i);
+    });
   });
 });
 

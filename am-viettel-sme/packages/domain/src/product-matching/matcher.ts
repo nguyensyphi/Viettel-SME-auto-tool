@@ -311,5 +311,116 @@ function matchRaw(input: ProductMatchInput): RawProductMatch[] {
     }
   }
 
+  const needs = new Set(
+    (input.businessNeeds ?? []).map((n) => n.trim().toLowerCase()),
+  );
+  const existingIds = new Set(matches.map((m) => m.serviceId));
+
+  if (
+    input.fleetCount !== undefined &&
+    input.fleetCount > 0 &&
+    input.segment === CustomerSegment.LOGISTICS_TRANSPORT
+  ) {
+    const vtracking = matches.find((m) => m.serviceId === "VTRACKING");
+    if (vtracking) {
+      vtracking.requiredConfirmations.push(
+        `Xác nhận số lượng ${input.fleetCount} phương tiện thực tế và chính sách chiết khấu theo lô`,
+      );
+    }
+  }
+
+  if (
+    !existingIds.has("DI_DONG_TRA_SAU") &&
+    (input.segment === CustomerSegment.MICRO_INDIVIDUAL ||
+      needs.has("di_dong") ||
+      needs.has("di_dong_tra_sau") ||
+      (input.employeeCount !== undefined && input.employeeCount >= 5))
+  ) {
+    matches.push({
+      serviceId: "DI_DONG_TRA_SAU",
+      serviceName: "Gói cước Di động trả sau Doanh nghiệp",
+      bundleAvailable: false,
+      painPointsAddressed: [
+        "Tối ưu cước gọi nội mạng và data cho đội ngũ kinh doanh",
+        "Quản lý hóa đơn viễn thông tập trung theo mã số thuế công ty",
+      ],
+      policyStatus: "CAN_XAC_NHAN_LAI",
+      requiredConfirmations: [
+        "Xác nhận danh mục gói cước di động trả sau KHDN hiện hành và điều kiện hòa mạng",
+      ],
+    });
+    existingIds.add("DI_DONG_TRA_SAU");
+  }
+
+  if (
+    !existingIds.has("VBHXH") &&
+    (input.segment === CustomerSegment.NEW_ESTABLISHED ||
+      needs.has("bhxh") ||
+      needs.has("vbhxh") ||
+      (input.employeeCount !== undefined && input.employeeCount >= 1))
+  ) {
+    matches.push({
+      serviceId: "VBHXH",
+      serviceName: "Phần mềm Kê khai Bảo hiểm xã hội điện tử vBHXH",
+      bundleAvailable: true,
+      bundleName: "Combo Khởi tạo doanh nghiệp (Viettel CA + Sinvoice + vBHXH)",
+      painPointsAddressed: [
+        "Báo tăng/giảm lao động và nộp hồ sơ BHXH điện tử trực tuyến",
+        "Ký số trực tiếp bằng Viettel CA hoặc MySign",
+      ],
+      policyStatus: "CAN_XAC_NHAN_LAI",
+      requiredConfirmations: [
+        "Xác nhận quy mô lao động tham gia BHXH và biểu phí gói năm hiện hành",
+      ],
+    });
+    existingIds.add("VBHXH");
+  }
+
+  if (
+    !existingIds.has("EASY_HRM") &&
+    (needs.has("nhan_su") ||
+      needs.has("hrm") ||
+      needs.has("easy_hrm") ||
+      (input.employeeCount !== undefined && input.employeeCount >= 20))
+  ) {
+    matches.push({
+      serviceId: "EASY_HRM",
+      serviceName: "Phần mềm Quản trị nhân sự EasyHRM",
+      bundleAvailable: false,
+      painPointsAddressed: [
+        "Quản lý hồ sơ nhân sự, chấm công ca kíp và tính lương tự động",
+        "Kết nối đồng bộ dữ liệu thuế TNCN và bảo hiểm xã hội",
+      ],
+      policyStatus: "CAN_XAC_NHAN_LAI",
+      requiredConfirmations: [
+        "Xác nhận quy mô nhân sự thực tế và module chấm công/tính lương cần triển khai",
+      ],
+    });
+    existingIds.add("EASY_HRM");
+  }
+
+  if (
+    !existingIds.has("VOFFICE") &&
+    (needs.has("van_phong_dien_tu") ||
+      needs.has("voffice") ||
+      (input.branchCount !== undefined && input.branchCount >= 2) ||
+      (input.employeeCount !== undefined && input.employeeCount >= 30))
+  ) {
+    matches.push({
+      serviceId: "VOFFICE",
+      serviceName: "Hệ thống Văn phòng điện tử vOffice",
+      bundleAvailable: false,
+      painPointsAddressed: [
+        "Quản lý công văn đi/đến, trình ký điện tử đa chi nhánh không giấy tờ",
+        "Tích hợp ký số lãnh đạo trực tiếp trên thiết bị di động",
+      ],
+      policyStatus: "CAN_XAC_NHAN_LAI",
+      requiredConfirmations: [
+        "Khảo sát mô hình tổ chức, số lượng tài khoản và phương án triển khai Cloud/On-Prem",
+      ],
+    });
+    existingIds.add("VOFFICE");
+  }
+
   return matches;
 }

@@ -61,6 +61,10 @@ const SERVICE_NAMES: Record<string, string> = {
   OFFICE_1: "quản trị doanh nghiệp 1Office",
   M2M_IOT: "kết nối thiết bị M2M/IoT",
   VOICE_BRANDNAME: "cuộc gọi thương hiệu Voice Brandname",
+  DI_DONG_TRA_SAU: "gói cước di động trả sau doanh nghiệp",
+  VBHXH: "kê khai Bảo hiểm xã hội điện tử vBHXH",
+  EASY_HRM: "quản trị nhân sự EasyHRM",
+  VOFFICE: "văn phòng điện tử vOffice",
 };
 
 /**

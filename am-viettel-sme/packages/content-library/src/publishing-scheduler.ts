@@ -11,6 +11,7 @@ export interface ManagedPostRecord extends ParsedPost {
   approvedBy?: string | undefined;
   approvedAt?: string | undefined;
   scheduledAt?: string | undefined;
+  scheduledTargets?: string[] | undefined;
 }
 
 export interface ScheduledPublishJobSpec {
@@ -27,6 +28,11 @@ export interface ScheduledPublishJobSpec {
 export class PublishingScheduler {
   private readonly posts = new Map<string, ManagedPostRecord>();
 
+  getPost(contentId: string): ManagedPostRecord | null {
+    const found = this.posts.get(contentId);
+    return found ? { ...found, matchedMedia: [...found.matchedMedia] } : null;
+  }
+
   registerDraft(
     post: ParsedPost,
     availableAssets: readonly MediaAsset[] = [],
@@ -36,6 +42,7 @@ export class PublishingScheduler {
       ...post,
       lifecycleStatus: "DRAFT",
       matchedMedia,
+      scheduledTargets: [],
     };
     this.posts.set(post.contentId, record);
     return { ...record };
@@ -72,7 +79,10 @@ export class PublishingScheduler {
     if (!record) {
       throw new Error(`Unknown contentId: ${contentId}`);
     }
-    if (record.lifecycleStatus !== "APPROVED") {
+    if (
+      record.lifecycleStatus !== "APPROVED" &&
+      record.lifecycleStatus !== "SCHEDULED"
+    ) {
       throw new Error(
         `POST_NOT_APPROVED: post "${contentId}" is ${record.lifecycleStatus}; AM must approve before scheduling`,
       );
@@ -91,9 +101,18 @@ export class PublishingScheduler {
       throw new Error("publishTime must be a valid Date");
     }
 
+    const targetKey = `${cleanAccount}:${platform}`;
+    const existingTargets = record.scheduledTargets ?? [];
+    if (existingTargets.includes(targetKey)) {
+      throw new Error(
+        `DUPLICATE_SCHEDULE: post "${contentId}" is already scheduled for ${targetKey}`,
+      );
+    }
+
     const publishAtIso = publishTime.toISOString();
     record.lifecycleStatus = "SCHEDULED";
     record.scheduledAt = publishAtIso;
+    record.scheduledTargets = [...existingTargets, targetKey];
 
     const jobSpec: ScheduledPublishJobSpec = {
       idempotencyKey: `publish:${cleanAccount}:${platform}:${contentId}:${publishAtIso}`,

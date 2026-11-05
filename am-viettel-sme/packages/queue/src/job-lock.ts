@@ -8,6 +8,7 @@ export interface LockResult {
 
 export interface JobLockAdapter {
   acquire(key: string, token: string, ttlMs: number): Promise<boolean>;
+  renew(key: string, token: string, ttlMs: number): Promise<boolean>;
   release(key: string, token: string): Promise<boolean>;
 }
 
@@ -48,6 +49,19 @@ export class InMemoryJobLockAdapter implements JobLockAdapter {
     return true;
   }
 
+  async renew(key: string, token: string, ttlMs: number): Promise<boolean> {
+    const now = Date.now();
+    const existing = this.locks.get(key);
+    if (!existing || existing.token !== token || existing.expiresAt <= now) {
+      return false;
+    }
+    this.locks.set(key, {
+      token,
+      expiresAt: now + ttlMs,
+    });
+    return true;
+  }
+
   async release(key: string, token: string): Promise<boolean> {
     const existing = this.locks.get(key);
     if (!existing) {
@@ -73,6 +87,15 @@ export class RedisJobLockAdapter implements JobLockAdapter {
     end
   `;
 
+  // Atomic Lua renew: extends TTL only when caller owns the lock token
+  private static readonly RENEW_SCRIPT = `
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+      return redis.call("pexpire", KEYS[1], ARGV[2])
+    else
+      return 0
+    end
+  `;
+
   private readonly keyPrefix: string;
 
   constructor(
@@ -92,6 +115,18 @@ export class RedisJobLockAdapter implements JobLockAdapter {
       "NX",
     );
     return result === "OK";
+  }
+
+  async renew(key: string, token: string, ttlMs: number): Promise<boolean> {
+    const prefixedKey = `${this.keyPrefix}${key}`;
+    const result = await this.redisClient.eval(
+      RedisJobLockAdapter.RENEW_SCRIPT,
+      1,
+      prefixedKey,
+      token,
+      ttlMs,
+    );
+    return result === 1;
   }
 
   async release(key: string, token: string): Promise<boolean> {
@@ -127,6 +162,10 @@ export class JobLockManager {
       token,
       key: normalizedKey,
     };
+  }
+
+  async renew(key: string, token: string, ttlMs: number): Promise<boolean> {
+    return this.adapter.renew(key.trim(), token, ttlMs);
   }
 
   async release(key: string, token: string): Promise<boolean> {

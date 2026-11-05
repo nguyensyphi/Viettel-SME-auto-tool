@@ -118,5 +118,94 @@ describe("PartnerCrmService — CTV Lifecycle, Referral Attribution & Commission
     expect(summaryAfterPayout.approvedPendingCommissionVnd).toBe(0);
     expect(summaryAfterPayout.paidCommissionVnd).toBe(350_000);
   });
+
+  it("blocks duplicate partnerId/phone, duplicate referralId, double conversion on CONVERTED referral, double payout, and raw DOB/9-digit CMND", () => {
+    const crm = new PartnerCrmService();
+
+    expect(() =>
+      crm.registerPartner({
+        partnerId: "ctv_dob",
+        fullName: "Nguyễn Văn B",
+        phone: "0911222333",
+        profession: "ACCOUNTANT",
+        notes: "SN: 15/08/1992 tại Bình Dương",
+      }),
+    ).toThrow(/PII_FORBIDDEN_IN_PARTNER_CRM/);
+
+    crm.registerPartner({
+      partnerId: "ctv_dup_1",
+      fullName: "Phạm Văn C",
+      phone: "0933444555",
+      profession: "ACCOUNTANT",
+    });
+
+    // Duplicate partnerId rejected
+    expect(() =>
+      crm.registerPartner({
+        partnerId: "ctv_dup_1",
+        fullName: "Người Khác",
+        phone: "0977888999",
+        profession: "ACCOUNTANT",
+      }),
+    ).toThrow(/DUPLICATE_PARTNER/);
+
+    // Duplicate phoneHash rejected
+    expect(() =>
+      crm.registerPartner({
+        partnerId: "ctv_dup_phone",
+        fullName: "Trùng SĐT",
+        phone: "+84 933 444 555",
+        profession: "ACCOUNTANT",
+      }),
+    ).toThrow(/DUPLICATE_PARTNER_PHONE/);
+
+    crm.transitionPartnerStage("ctv_dup_1", "CONTACTED", "am_01");
+    crm.transitionPartnerStage("ctv_dup_1", "ACTIVE_PARTNER", "am_01");
+
+    crm.recordReferral({
+      referralId: "ref_u1",
+      partnerId: "ctv_dup_1",
+      companyName: "Công ty TNHH Một",
+      taxCode: "0312345678",
+      productCodes: ["VIETTEL_CA"],
+    });
+
+    // Duplicate referralId rejected
+    expect(() =>
+      crm.recordReferral({
+        referralId: "ref_u1",
+        partnerId: "ctv_dup_1",
+        companyName: "Công ty TNHH Hai",
+        taxCode: "0312345679",
+        productCodes: ["VIETTEL_CA"],
+      }),
+    ).toThrow(/DUPLICATE_REFERRAL/);
+
+    crm.recordConversion({
+      conversionId: "conv_u1",
+      referralId: "ref_u1",
+      contractRevenueVnd: 1_000_000,
+      commissionRatePercent: 10,
+      commissionPolicyConfirmedByAmId: "am_01",
+    });
+
+    // Cannot convert an already CONVERTED referral a second time
+    expect(() =>
+      crm.recordConversion({
+        conversionId: "conv_u2",
+        referralId: "ref_u1",
+        contractRevenueVnd: 1_000_000,
+        commissionRatePercent: 10,
+        commissionPolicyConfirmedByAmId: "am_01",
+      }),
+    ).toThrow(/REFERRAL_ALREADY_CONVERTED/);
+
+    crm.markCommissionPaid("conv_u1", "UNC-001", "fin_01");
+
+    // Cannot double-pay an already PAID conversion
+    expect(() =>
+      crm.markCommissionPaid("conv_u1", "UNC-002", "fin_01"),
+    ).toThrow(/CONVERSION_ALREADY_PAID/);
+  });
 });
 

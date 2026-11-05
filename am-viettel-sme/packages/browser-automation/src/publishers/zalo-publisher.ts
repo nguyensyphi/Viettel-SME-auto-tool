@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { BrowserPageHandle } from "../types.js";
 
 export interface PlatformPublishInput {
@@ -38,10 +39,16 @@ export async function publishToZalo(input: PlatformPublishInput): Promise<void> 
   }
 
   if (mediaPaths && mediaPaths.length > 0) {
-    const fileInputSelector = "input[type='file']";
-    if ((await page.locator(fileInputSelector).count()) > 0) {
-      await page.locator(fileInputSelector).first().setInputFiles(mediaPaths);
+    for (const mediaPath of mediaPaths) {
+      if (!fs.existsSync(mediaPath)) {
+        throw new Error(`MEDIA_FILE_NOT_FOUND:${mediaPath}`);
+      }
     }
+    const fileInputSelector = "input[type='file']";
+    if ((await page.locator(fileInputSelector).count()) === 0) {
+      throw new Error("ZALO_FILE_INPUT_NOT_FOUND");
+    }
+    await page.locator(fileInputSelector).first().setInputFiles(mediaPaths);
   }
 
   if (submit) {

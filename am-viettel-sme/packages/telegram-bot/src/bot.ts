@@ -30,6 +30,7 @@ export interface TelegramCommandResult {
 
 export interface TelegramAdminBotOptions {
   allowedOperatorIds: readonly string[];
+  allowedChatIds?: readonly string[] | undefined;
   killSwitch: KillSwitchController;
   transport: TelegramTransport;
   getDashboardSnapshot: () => Promise<DashboardSnapshot>;
@@ -38,6 +39,7 @@ export interface TelegramAdminBotOptions {
 
 export class TelegramAdminBot {
   private readonly allowedOperators: ReadonlySet<string>;
+  private readonly allowedChats: ReadonlySet<string> | null;
   private readonly killSwitch: KillSwitchController;
   private readonly transport: TelegramTransport;
   private readonly getDashboardSnapshot: () => Promise<DashboardSnapshot>;
@@ -47,6 +49,9 @@ export class TelegramAdminBot {
     this.allowedOperators = new Set(
       options.allowedOperatorIds.map((id) => id.trim()).filter(Boolean),
     );
+    this.allowedChats = options.allowedChatIds
+      ? new Set(options.allowedChatIds.map((c) => c.trim()).filter(Boolean))
+      : null;
     this.killSwitch = options.killSwitch;
     this.transport = options.transport;
     this.getDashboardSnapshot = options.getDashboardSnapshot;
@@ -55,12 +60,18 @@ export class TelegramAdminBot {
 
   async handleUpdate(update: TelegramUpdateInput): Promise<TelegramCommandResult> {
     const operatorId = update.operatorId.trim();
+    const chatId = update.chatId.trim();
     const rawText = update.text.trim();
     const parts = rawText.split(/\s+/u);
-    const command = (parts[0] ?? "").toLowerCase();
+    const command = ((parts[0] ?? "").split("@")[0] ?? "").toLowerCase();
     const argsText = parts.slice(1).join(" ").trim();
 
-    if (!operatorId || !this.allowedOperators.has(operatorId)) {
+    if (
+      !operatorId ||
+      !this.allowedOperators.has(operatorId) ||
+      !chatId ||
+      (this.allowedChats !== null && !this.allowedChats.has(chatId))
+    ) {
       return {
         authorized: false,
         command,

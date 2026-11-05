@@ -94,7 +94,7 @@ export interface PartnerReconciliationSummary {
 }
 
 const PARTNER_PII_PATTERN =
-  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh|ngày\s*sinh|birthdate|dob)\b|\b0\d{11}\b)/iu;
+  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b|\b0\d{11}\b|\b(?:sn|sinh\s*ngày|ngày\s*sinh|birthdate|dob)\b[^\n\r]{0,20}\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:ngày\s*sinh|birthdate|dob)\b)/iu;
 
 const ALLOWED_STAGE_TRANSITIONS: Record<PartnerStage, ReadonlySet<PartnerStage>> = {
   NEW: new Set<PartnerStage>(["CONTACTED", "INACTIVE"]),
@@ -131,6 +131,9 @@ export class PartnerCrmService {
     if (!partnerId || !fullName) {
       throw new Error("INVALID_PARTNER_INPUT: partnerId and fullName are required");
     }
+    if (this.partners.has(partnerId)) {
+      throw new Error(`DUPLICATE_PARTNER:${partnerId}`);
+    }
 
     assertNoForbiddenPartnerPii(fullName);
     assertNoForbiddenPartnerPii(input.notes);
@@ -145,6 +148,12 @@ export class PartnerCrmService {
       .createHash("sha256")
       .update(phoneRes.normalizedKey)
       .digest("hex");
+
+    for (const existing of this.partners.values()) {
+      if (existing.phoneHash === phoneHash) {
+        throw new Error("DUPLICATE_PARTNER_PHONE");
+      }
+    }
 
     const now = new Date().toISOString();
     const record: PartnerRecord = {
@@ -201,6 +210,14 @@ export class PartnerCrmService {
   }
 
   recordReferral(input: RecordReferralInput): ReferralRecord {
+    const referralId = input.referralId.trim();
+    if (!referralId) {
+      throw new Error("INVALID_REFERRAL_INPUT: referralId is required");
+    }
+    if (this.referrals.has(referralId)) {
+      throw new Error(`DUPLICATE_REFERRAL:${referralId}`);
+    }
+
     const partner = this.partners.get(input.partnerId);
     if (!partner) {
       throw new Error(`PARTNER_NOT_FOUND:${input.partnerId}`);
@@ -218,7 +235,7 @@ export class PartnerCrmService {
     }
 
     const record: ReferralRecord = {
-      referralId: input.referralId.trim(),
+      referralId,
       partnerId: partner.partnerId,
       companyName: company.display,
       normalizedTaxCode,
@@ -232,10 +249,23 @@ export class PartnerCrmService {
   }
 
   recordConversion(input: RecordConversionInput): ConversionRecord {
+    const conversionId = input.conversionId.trim();
+    if (!conversionId) {
+      throw new Error("INVALID_CONVERSION_INPUT: conversionId is required");
+    }
+    if (this.conversions.has(conversionId)) {
+      throw new Error(`DUPLICATE_CONVERSION:${conversionId}`);
+    }
+
     const referral = this.referrals.get(input.referralId);
     if (!referral) {
       throw new Error(`REFERRAL_NOT_FOUND:${input.referralId}`);
     }
+    if (referral.status === "CONVERTED") {
+      throw new Error(`REFERRAL_ALREADY_CONVERTED:${referral.referralId}`);
+    }
+
+    assertNoForbiddenPartnerPii(input.policyReferenceNote);
 
     const confirmedAm = input.commissionPolicyConfirmedByAmId?.trim() ?? "";
     if (!confirmedAm) {
@@ -261,7 +291,7 @@ export class PartnerCrmService {
     });
 
     const conversion: ConversionRecord = {
-      conversionId: input.conversionId.trim(),
+      conversionId,
       referralId: referral.referralId,
       partnerId: referral.partnerId,
       contractRevenueVnd: input.contractRevenueVnd,
@@ -287,6 +317,9 @@ export class PartnerCrmService {
     const existing = this.conversions.get(conversionId);
     if (!existing) {
       throw new Error(`CONVERSION_NOT_FOUND:${conversionId}`);
+    }
+    if (existing.payoutStatus === "PAID") {
+      throw new Error(`CONVERSION_ALREADY_PAID:${conversionId}`);
     }
     if (!payoutReference.trim() || !operatorId.trim()) {
       throw new Error("PAYOUT_REFERENCE_AND_OPERATOR_REQUIRED");

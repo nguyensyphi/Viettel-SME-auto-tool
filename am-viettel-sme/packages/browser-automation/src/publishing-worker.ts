@@ -36,6 +36,7 @@ export interface PublishingJob {
   mediaPaths?: readonly string[] | undefined;
   mode: PublishingExecutionMode;
   amApprovedSubmission?: boolean | undefined;
+  keepBrowserOpenForAmReview?: boolean | undefined;
 }
 
 export interface PublishingResult {
@@ -45,6 +46,7 @@ export interface PublishingResult {
   platform: SocialPlatform;
   screenshotPath?: string | undefined;
   reason?: string | undefined;
+  releaseDraftSession?: (() => Promise<void>) | undefined;
   completedAt: string;
 }
 
@@ -112,6 +114,25 @@ export class PublishingWorker {
       }
     }
 
+    const knownSession = await this.sessionStore.getStatus(
+      job.accountId,
+      job.platform,
+    );
+    if (
+      knownSession &&
+      (knownSession.status === "NEEDS_LOGIN" ||
+        knownSession.status === "SUSPENDED")
+    ) {
+      return {
+        status: "NEEDS_LOGIN",
+        jobId: job.jobId,
+        accountId: job.accountId,
+        platform: job.platform,
+        reason: knownSession.reason ?? knownSession.status,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
     if (this.rateLimiter) {
       const rl = await this.rateLimiter.checkRateLimit(
         `publish:${job.platform}:${job.accountId}`,
@@ -132,13 +153,18 @@ export class PublishingWorker {
 
     const shouldSubmit =
       job.mode === "FULL_AUTO" || job.amApprovedSubmission === true;
-    const headless = job.mode === "FULL_AUTO";
+    const keepOpenRequested =
+      job.mode === "SEMI_AUTO" &&
+      !shouldSubmit &&
+      job.keepBrowserOpenForAmReview === true;
+    const headless = !keepOpenRequested;
 
     const context = await this.profileManager.launchAccountBrowser(
       job.accountId,
       job.platform,
       { headless },
     );
+    let keepOpenForCaller = false;
 
     try {
       const existingPages = context.pages();
@@ -204,12 +230,19 @@ export class PublishingWorker {
         await this.circuitBreaker.recordSuccess(job.accountId);
       }
 
+      if (keepOpenRequested) {
+        keepOpenForCaller = true;
+      }
+
       return {
         status: shouldSubmit ? "PUBLISHED" : "AWAITING_AM_CONFIRMATION",
         jobId: job.jobId,
         accountId: job.accountId,
         platform: job.platform,
         screenshotPath,
+        ...(keepOpenForCaller
+          ? { releaseDraftSession: () => context.close() }
+          : {}),
         completedAt: new Date().toISOString(),
       };
     } catch (err) {
@@ -226,7 +259,9 @@ export class PublishingWorker {
         completedAt: new Date().toISOString(),
       };
     } finally {
-      await context.close();
+      if (!keepOpenForCaller) {
+        await context.close();
+      }
     }
   }
 }

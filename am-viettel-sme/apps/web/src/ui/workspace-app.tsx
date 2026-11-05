@@ -356,6 +356,9 @@ export function WorkspaceApp({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [data, setData] = useState<unknown>(null);
+  const [accountsData, setAccountsData] = useState<unknown>(null);
+  const [calendarData, setCalendarData] = useState<unknown>(null);
+  const [campaignsData, setCampaignsData] = useState<unknown>(null);
   const [leadList, setLeadList] = useState<unknown>(null);
   const [leadDetail, setLeadDetail] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -364,6 +367,9 @@ export function WorkspaceApp({
   const [importHandle, setImportHandle] = useState<ImportHandle | null>(null);
   const [validatingImport, setValidatingImport] = useState(false);
   const validatingImportRef = useRef(false);
+  const activeTabRef = useRef<Tab>(tab);
+  activeTabRef.current = tab;
+  const loadSeqRef = useRef(0);
   const [commitIdempotencyKey, setCommitIdempotencyKey] = useState("");
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [decisions, setDecisions] = useState<Record<number, string>>({});
@@ -408,6 +414,9 @@ export function WorkspaceApp({
   );
 
   async function loadTab(selected = tab) {
+    const seq = ++loadSeqRef.current;
+    const isCurrent = () =>
+      seq === loadSeqRef.current && activeTabRef.current === selected;
     setError("");
     setNotice("");
     setBusy(true);
@@ -417,12 +426,14 @@ export function WorkspaceApp({
           api<TaskCard[]>("/tasks?status=OPEN"),
           api<TaskCard[]>("/tasks?status=IN_PROGRESS"),
         ]);
-        setData([...openTasks, ...inProgressTasks]);
+        if (isCurrent()) setData([...openTasks, ...inProgressTasks]);
       }
       if (selected === "leads") {
         const leads = await api("/leads?limit=50&offset=0");
-        setLeadList(leads);
-        setData(leads);
+        if (isCurrent()) {
+          setLeadList(leads);
+          setData(leads);
+        }
       }
       if (selected === "planner") {
         const [openTasks, inProgressTasks, leadResult, usersResult] =
@@ -448,39 +459,54 @@ export function WorkspaceApp({
                   }[];
                 }>("/users"),
           ]);
-        setData([...openTasks, ...inProgressTasks]);
-        setPlannerLeads(leadResult.items ?? []);
-        setPlannerUsers(
-          (usersResult.items ?? []).filter((user) => user.role === "AM"),
-        );
+        if (isCurrent()) {
+          setData([...openTasks, ...inProgressTasks]);
+          setPlannerLeads(leadResult.items ?? []);
+          setPlannerUsers(
+            (usersResult.items ?? []).filter((user) => user.role === "AM"),
+          );
+        }
       }
       if (selected === "accounts") {
-        setData(await api("/social-accounts").catch(() => ({ items: [] })));
+        const accounts = await api("/social-accounts");
+        if (isCurrent()) {
+          setAccountsData(accounts);
+          setData(accounts);
+        }
       }
       if (selected === "calendar") {
-        setData(await api("/publishing-calendar").catch(() => ({ items: [] })));
+        const calendar = await api("/publishing-calendar");
+        if (isCurrent()) {
+          setCalendarData(calendar);
+          setData(calendar);
+        }
       }
       if (selected === "campaigns") {
-        setData(
-          await api("/campaigns-overview").catch(() => ({
-            campaigns: [],
-            partners: [],
-          })),
-        );
+        const overview = await api("/campaigns-overview");
+        if (isCurrent()) {
+          setCampaignsData(overview);
+          setData(overview);
+        }
       }
       if (selected === "team") {
         const [users, teams] = await Promise.all([
           api("/users"),
           api("/teams"),
         ]);
-        setData({ users, teams });
+        if (isCurrent()) setData({ users, teams });
       }
-      if (selected === "audit")
-        setData(await api("/audit-events?limit=50&offset=0"));
+      if (selected === "audit") {
+        const audit = await api("/audit-events?limit=50&offset=0");
+        if (isCurrent()) setData(audit);
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "REQUEST_FAILED");
+      if (isCurrent()) {
+        setError(cause instanceof Error ? cause.message : "REQUEST_FAILED");
+      }
     } finally {
-      setBusy(false);
+      if (seq === loadSeqRef.current) {
+        setBusy(false);
+      }
     }
   }
 
@@ -879,6 +905,7 @@ export function WorkspaceApp({
                 className={`nav-item ${tab === item.id ? "active" : ""}`}
                 aria-current={tab === item.id ? "page" : undefined}
                 onClick={() => {
+                  activeTabRef.current = item.id;
                   setTab(item.id);
                   setData(null);
                   setSelectedLead(null);
@@ -1211,23 +1238,59 @@ export function WorkspaceApp({
           )}
           {tab === "accounts" && (
             <AccountsView
-              data={data}
+              data={accountsData ?? data}
               onTriggerQrLogin={(accountId, platform) => {
-                setNotice(
-                  `Đã gửi yêu cầu mở trình duyệt quét QR cho ${platform} (${accountId}).`,
-                );
+                void (async () => {
+                  setError("");
+                  try {
+                    await api(
+                      `/social-accounts/${encodeURIComponent(accountId)}/qr-login`,
+                      jsonInit("POST", { platform }),
+                    );
+                    if (activeTabRef.current === "accounts") {
+                      await loadTab("accounts");
+                    }
+                    setNotice(
+                      `Đã gửi yêu cầu mở trình duyệt quét QR cho ${platform} (${accountId}).`,
+                    );
+                  } catch (cause) {
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "QR_LOGIN_FAILED",
+                    );
+                  }
+                })();
               }}
             />
           )}
           {tab === "calendar" && (
             <CalendarView
-              data={data}
+              data={calendarData ?? data}
               onApprovePost={(contentId) => {
-                setNotice(`Đã ghi nhận duyệt bài ${contentId}.`);
+                void (async () => {
+                  setError("");
+                  try {
+                    await api(
+                      `/publishing-calendar/${encodeURIComponent(contentId)}/approve`,
+                      jsonInit("POST", {}),
+                    );
+                    if (activeTabRef.current === "calendar") {
+                      await loadTab("calendar");
+                    }
+                    setNotice(`Đã ghi nhận duyệt bài ${contentId}.`);
+                  } catch (cause) {
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "APPROVE_POST_FAILED",
+                    );
+                  }
+                })();
               }}
             />
           )}
-          {tab === "campaigns" && <CampaignView data={data} />}
+          {tab === "campaigns" && <CampaignView data={campaignsData ?? data} />}
           {tab === "audit" && (
             <section className="panel">
               <div className="panel-heading">

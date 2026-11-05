@@ -18,6 +18,7 @@ import {
 } from "@am-sme/database/lead-workspace";
 import { TaskRepository } from "@am-sme/database/tasks";
 import { InMemoryImportApi } from "./import-api.js";
+import { WorkspaceOperationsHub } from "./operations-hub.js";
 import type { ApiServices } from "./http-api.js";
 
 let singleton: ApiServices | null = null;
@@ -75,6 +76,7 @@ export function getApiServices(): ApiServices {
     tasks: new TaskRepository(leadDb),
     imports: new InMemoryImportApi(previewService),
     db: leadDb,
+    operations: new WorkspaceOperationsHub(),
     sessionCookie: {
       secure: appEnv === "staging",
       maxAgeSeconds: Math.floor(sessionTtlMs / 1000),

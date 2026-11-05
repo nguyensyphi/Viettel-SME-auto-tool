@@ -125,5 +125,25 @@ describe("Queue & Job Safety Core", () => {
         }),
       ).rejects.toThrow(/idempotencyKey is required/i);
     });
+
+    it("supports atomic JobLock renewal (InMemory & Redis Lua) only when token matches", async () => {
+      const memAdapter = new InMemoryJobLockAdapter();
+      const memLocks = new JobLockManager(memAdapter);
+
+      const lock = await memLocks.acquire("account:am-renew-unit", 60);
+      expect(lock.acquired).toBe(true);
+
+      // Rogue token cannot renew
+      const rogueRenew = await memLocks.renew("account:am-renew-unit", "wrong-token", 500);
+      expect(rogueRenew).toBe(false);
+
+      // Legitimate token extends expiry past original 60ms
+      const validRenew = await memLocks.renew("account:am-renew-unit", lock.token!, 500);
+      expect(validRenew).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 80));
+      const blocked = await memLocks.acquire("account:am-renew-unit", 100);
+      expect(blocked.acquired).toBe(false);
+    });
   });
 });

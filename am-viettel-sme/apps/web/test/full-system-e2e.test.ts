@@ -451,4 +451,121 @@ Giải pháp chữ ký số doanh nghiệp mới thành lập tại Bình Dươn
     expect(screen.getByText("Trần Thị Minh")).toBeTruthy();
     expect(screen.getByText("********78")).toBeTruthy();
   });
+
+  it("surfaces 500/403 API errors on Phase 2-4 tabs instead of swallowing them and POSTs QR login & post approval actions", async () => {
+    const principal = {
+      userId: "am-1",
+      workspaceId: "workspace-1",
+      role: "AM" as const,
+      teamId: "team-1",
+    };
+
+    let failSocialAccountsOnce = true;
+    const postCalls: Array<{ url: string; method: string }> = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "POST") {
+        postCalls.push({ url, method });
+      }
+
+      if (url.endsWith("/auth/me")) {
+        return new Response(JSON.stringify({ user: principal }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/social-accounts") && method === "GET") {
+        if (failSocialAccountsOnce) {
+          failSocialAccountsOnce = false;
+          return new Response(JSON.stringify({ error: "BACKEND_UNAVAILABLE" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                accountId: "am_zalo_01",
+                platform: "ZALO",
+                status: "NEEDS_LOGIN",
+                profileDir: "storage/browser_profiles/am_zalo_01",
+                circuitState: "CLOSED",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/social-accounts/am_zalo_01/qr-login") && method === "POST") {
+        return new Response(
+          JSON.stringify({ accountId: "am_zalo_01", status: "QR_SESSION_REQUESTED" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/publishing-calendar") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                contentId: "POST-DRAFT-99",
+                topic: "CHU_KY_SO",
+                platform: "FACEBOOK",
+                status: "DRAFT",
+                mode: "SEMI_AUTO",
+                publishTime: "2026-11-06T09:00:00.000Z",
+                mediaCount: 1,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/publishing-calendar/POST-DRAFT-99/approve") && method === "POST") {
+        return new Response(
+          JSON.stringify({ contentId: "POST-DRAFT-99", status: "APPROVED" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(WorkspaceApp));
+    await screen.findByRole("heading", { name: "Dashboard hôm nay" });
+
+    // First click hits 500 -> must surface error alert instead of swallowing!
+    fireEvent.click(screen.getByRole("button", { name: "Tài khoản & Phiên" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "BACKEND_UNAVAILABLE",
+    );
+
+    // Refresh loads accounts -> click QR login button -> must POST to backend!
+    fireEvent.click(screen.getByRole("button", { name: "Làm mới" }));
+    expect(await screen.findByText("am_zalo_01")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Quét QR đăng nhập/i }));
+
+    // Calendar tab -> click Duyệt bài -> must POST to backend!
+    fireEvent.click(screen.getByRole("button", { name: "Lịch nội dung" }));
+    expect(await screen.findByText("POST-DRAFT-99")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Duyệt bài" }));
+
+    await vi.waitFor(() => {
+      expect(
+        postCalls.some((c) =>
+          c.url.endsWith("/social-accounts/am_zalo_01/qr-login"),
+        ),
+      ).toBe(true);
+      expect(
+        postCalls.some((c) =>
+          c.url.endsWith("/publishing-calendar/POST-DRAFT-99/approve"),
+        ),
+      ).toBe(true);
+    });
+  });
 });

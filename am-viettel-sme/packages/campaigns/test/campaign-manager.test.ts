@@ -163,6 +163,16 @@ describe("GroupManager & CampaignManager — Partner & Group Campaign Automation
       }),
     ).toThrow(/PII_DETECTED/);
 
+    expect(() =>
+      campaignManager.createCampaign({
+        campaignId: "CMP-DOB",
+        name: "Chiến dịch lỗi DOB",
+        campaignType: "PARTNER_RECRUITMENT",
+        targetCategories: ["ACCOUNTING_TAX"],
+        contentTemplate: "Thông tin đại diện SN: 02/09/1990 đăng ký CTV",
+      }),
+    ).toThrow(/PII_DETECTED/);
+
     campaignManager.createCampaign({
       campaignId: "CMP-SAFE",
       name: "Chiến dịch hợp lệ",

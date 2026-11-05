@@ -428,4 +428,119 @@ describe("P0.7 API security boundary", () => {
     expect(text).not.toContain("raw-email@example.test");
     expect(text).not.toContain("secret");
   });
+
+  it("serves Phase 2-4 social-accounts, publishing-calendar, campaigns-overview routes with auth/CSRF and mutates approval & QR login state", async () => {
+    const unauth = setup(null);
+    const rUnauth = await handleApiRequest(
+      request("/api/v1/social-accounts"),
+      ["api", "v1", "social-accounts"],
+      unauth.services,
+    );
+    expect(rUnauth.status).toBe(401);
+
+    const { services } = setup(am);
+
+    // Cross-origin POST rejected by CSRF guard
+    const csrfBlocked = await handleApiRequest(
+      request(
+        "/api/v1/social-accounts/am_zalo_01/qr-login",
+        "POST",
+        JSON.stringify({ platform: "ZALO" }),
+        {
+          ...loggedHeaders(),
+          "content-type": "application/json",
+          origin: "https://evil.invalid",
+        },
+      ),
+      ["api", "v1", "social-accounts", "am_zalo_01", "qr-login"],
+      services,
+    );
+    expect(csrfBlocked.status).toBe(403);
+
+    // Trigger QR login registers/updates account state and returns 200
+    const qrRes = await handleApiRequest(
+      request(
+        "/api/v1/social-accounts/am_zalo_01/qr-login",
+        "POST",
+        JSON.stringify({ platform: "ZALO" }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "social-accounts", "am_zalo_01", "qr-login"],
+      services,
+    );
+    expect(qrRes.status).toBe(200);
+    const qrPayload = (await qrRes.json()) as { status: string; accountId: string };
+    expect(qrPayload.accountId).toBe("am_zalo_01");
+
+    const accountsRes = await handleApiRequest(
+      request("/api/v1/social-accounts", "GET", undefined, loggedHeaders()),
+      ["api", "v1", "social-accounts"],
+      services,
+    );
+    expect(accountsRes.status).toBe(200);
+    const accountsBody = (await accountsRes.json()) as {
+      items: Array<{ accountId: string; profileDir: string }>;
+    };
+    expect(
+      accountsBody.items.some((i) => i.accountId === "am_zalo_01"),
+    ).toBe(true);
+
+    // Create/seed draft calendar post via POST, then approve it via POST /approve
+    const createDraftRes = await handleApiRequest(
+      request(
+        "/api/v1/publishing-calendar",
+        "POST",
+        JSON.stringify({
+          contentId: "POST-API-01",
+          topic: "CHU_KY_SO",
+          platform: "FACEBOOK",
+          mode: "SEMI_AUTO",
+          publishTime: "2026-11-06T09:00:00.000Z",
+          content: "Chia sẻ giải pháp chữ ký số SME.",
+        }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "publishing-calendar"],
+      services,
+    );
+    expect(createDraftRes.status).toBe(201);
+
+    const approveRes = await handleApiRequest(
+      request(
+        "/api/v1/publishing-calendar/POST-API-01/approve",
+        "POST",
+        JSON.stringify({}),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "publishing-calendar", "POST-API-01", "approve"],
+      services,
+    );
+    expect(approveRes.status).toBe(200);
+
+    const calRes = await handleApiRequest(
+      request("/api/v1/publishing-calendar", "GET", undefined, loggedHeaders()),
+      ["api", "v1", "publishing-calendar"],
+      services,
+    );
+    expect(calRes.status).toBe(200);
+    const calBody = (await calRes.json()) as {
+      items: Array<{ contentId: string; status: string }>;
+    };
+    expect(calBody.items.find((i) => i.contentId === "POST-API-01")?.status).toBe(
+      "APPROVED",
+    );
+
+    const campRes = await handleApiRequest(
+      request("/api/v1/campaigns-overview", "GET", undefined, loggedHeaders()),
+      ["api", "v1", "campaigns-overview"],
+      services,
+    );
+    expect(campRes.status).toBe(200);
+    const campBody = (await campRes.json()) as {
+      campaigns: unknown[];
+      partners: unknown[];
+    };
+    expect(Array.isArray(campBody.campaigns)).toBe(true);
+    expect(Array.isArray(campBody.partners)).toBe(true);
+  });
 });

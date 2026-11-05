@@ -77,6 +77,13 @@ TOPIC: CA
 CONTENT: Hồ sơ khách hàng CCCD: 079095001234 cần gia hạn.
       `;
       expect(() => parseStructuredPosts(piiDoc)).toThrow(/PII_DETECTED/i);
+
+      const dobDoc = `
+CONTENT_ID: POST-DOB
+TOPIC: CA
+CONTENT: Khách hàng Nguyễn Văn A ngày sinh 20/11/1985 cần cấp mới.
+      `;
+      expect(() => parseStructuredPosts(dobDoc)).toThrow(/PII_DETECTED/i);
     });
   });
 

@@ -116,4 +116,18 @@ describe("Customer Classification Engine (M01-05)", () => {
       ]),
     );
   });
+
+  it("prioritizes specific vertical industry (e.g. newly established Logistics or FnB) over generic NEW_ESTABLISHED while including starter CA/Sinvoice", () => {
+    const newLogistics = classifyCustomerLead({
+      taxCode: "3709991112",
+      businessName: "CÔNG TY TNHH VẬN TẢI MỚI BÌNH DƯƠNG",
+      establishedYear: new Date().getFullYear(),
+      industry: "Vận tải hàng hóa bằng đường bộ",
+      isNewlyEstablished: true,
+    });
+
+    expect(newLogistics.segment).toBe(CustomerSegment.LOGISTICS_TRANSPORT);
+    expect(newLogistics.recommendedServices).toContain("VTRACKING");
+    expect(newLogistics.recommendedServices).toContain("VIETTEL_CA");
+  });
 });
