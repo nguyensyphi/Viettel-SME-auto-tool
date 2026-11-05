@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    "./contactability": "./src/contactability/policy.ts"
+    ".": "./src/index.ts",
+    "./contactability": "./src/contactability/policy.ts",
+    "./classification": "./src/classification/customer-classifier.ts"
   }
 }
