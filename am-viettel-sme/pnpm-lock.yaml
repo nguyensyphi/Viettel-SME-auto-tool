@@ -153,6 +153,9 @@ importers:
 
   packages/queue:
     dependencies:
+      '@am-sme/config':
+        specifier: workspace:*
+        version: link:../config
       bullmq:
         specifier: ^5.41.0
         version: 5.81.5(supports-color@7.2.0)

@@ -3,6 +3,14 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JobLockManager, RedisJobLockAdapter } from "../src/job-lock.js";
 import { BullMqQueueRuntime } from "../src/bullmq-runtime.js";
+import {
+  AccountCircuitBreaker,
+  KillSwitchController,
+  RateLimiter,
+  RedisCircuitBreakerStore,
+  RedisKillSwitchStore,
+  RedisRateLimitStore,
+} from "@am-sme/config";
 
 const TEST_REDIS_URL = process.env["TEST_REDIS_URL"] ?? "redis://127.0.0.1:6379/15";
 
@@ -221,6 +229,116 @@ describe("Real Redis & BullMQ Queue Safety Integration", () => {
         expect(dlqJobs[0]?.lockKey).toBe("account:am-expired");
         expect(dlqJobs[0]?.failedReason).toContain("SESSION_EXPIRED");
         expect(dlqJobs[0]?.attemptsMade).toBe(4);
+      } finally {
+        await runtime.close();
+      }
+    });
+
+    it("halts enqueue and worker execution immediately on Kill Switch or 5-error account Circuit Breaker trip", async () => {
+      const queueName = `guarded-${crypto.randomUUID().slice(0, 6)}`;
+      const killSwitch = new KillSwitchController(
+        new RedisKillSwitchStore(redisA, { keyPrefix: `${runPrefix}:` }),
+      );
+      const circuitBreaker = new AccountCircuitBreaker(
+        new RedisCircuitBreakerStore(redisA, { keyPrefix: `${runPrefix}:` }),
+        { failureThreshold: 5, cooldownMs: 60_000 },
+      );
+      const rateLimiter = new RateLimiter(
+        new RedisRateLimitStore(redisA, { keyPrefix: `${runPrefix}:` }),
+      );
+
+      // Verify Redis Lua rate limiter works across real Redis
+      expect((await rateLimiter.checkRateLimit("zalo:am-1", 2, 5_000)).allowed).toBe(true);
+      expect((await rateLimiter.checkRateLimit("zalo:am-1", 2, 5_000)).allowed).toBe(true);
+      expect((await rateLimiter.checkRateLimit("zalo:am-1", 2, 5_000)).allowed).toBe(false);
+
+      const runtime = new BullMqQueueRuntime({
+        redisUrl: TEST_REDIS_URL,
+        prefix: runPrefix,
+        defaultBackoffMs: 20,
+        enableBuiltInSafetyControls: true,
+      });
+
+      const executedFor: string[] = [];
+
+      try {
+        await runtime.registerWorker<{ accountId: string; shouldFail: boolean }>(
+          queueName,
+          async (data) => {
+            executedFor.push(data.accountId);
+            if (data.shouldFail) {
+              throw new Error("ZALO_ACTION_BLOCKED");
+            }
+          },
+          { concurrency: 1, lockTtlMs: 2_000 },
+        );
+
+        // Trigger 5 consecutive errors on account "am-bad" (1 job w/ maxRetries:3 = 4 attempts + 1 more job = 5th failure -> trips OPEN!)
+        await runtime.enqueue(queueName, {
+          idempotencyKey: "spike-batch-1",
+          lockKey: "account:am-bad",
+          accountId: "am-bad",
+          payload: { accountId: "am-bad", shouldFail: true },
+          maxRetries: 3,
+          backoffDelayMs: 20,
+        });
+
+        await new Promise((r) => setTimeout(r, 400));
+
+        await runtime.enqueue(queueName, {
+          idempotencyKey: "spike-batch-2",
+          lockKey: "account:am-bad",
+          accountId: "am-bad",
+          payload: { accountId: "am-bad", shouldFail: true },
+          maxRetries: 3,
+          backoffDelayMs: 20,
+        });
+
+        // Wait until circuit breaker opens on 5th consecutive error (meaning spike-batch-2 must NOT execute 4 full attempts!)
+        const deadline = Date.now() + 4_000;
+        while ((await circuitBreaker.canExecute("am-bad")).allowed && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 40));
+        }
+
+        expect((await circuitBreaker.canExecute("am-bad")).state).toBe("OPEN");
+        // Stopped right at 5 executions instead of continuing retries 6, 7, 8!
+        expect(executedFor.filter((a) => a === "am-bad").length).toBe(5);
+
+        // Enqueueing a new job for tripped account "am-bad" is rejected immediately
+        await expect(
+          runtime.enqueue(queueName, {
+            idempotencyKey: "spike-batch-3",
+            lockKey: "account:am-bad",
+            accountId: "am-bad",
+            payload: { accountId: "am-bad", shouldFail: false },
+          }),
+        ).rejects.toThrow(/CIRCUIT_OPEN/i);
+
+        // Healthy account "am-good" can still enqueue and execute
+        await runtime.enqueue(queueName, {
+          idempotencyKey: "good-job-1",
+          lockKey: "account:am-good",
+          accountId: "am-good",
+          payload: { accountId: "am-good", shouldFail: false },
+        });
+
+        const goodDeadline = Date.now() + 2_000;
+        while (!executedFor.includes("am-good") && Date.now() < goodDeadline) {
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        expect(executedFor).toContain("am-good");
+
+        // Now activate global Kill Switch via Redis -> rejects ALL new jobs immediately
+        await killSwitch.activateKillSwitch("Emergency administrative abort", "admin-root");
+
+        await expect(
+          runtime.enqueue(queueName, {
+            idempotencyKey: "good-job-2",
+            lockKey: "account:am-good",
+            accountId: "am-good",
+            payload: { accountId: "am-good", shouldFail: false },
+          }),
+        ).rejects.toThrow(/KILL_SWITCH_ACTIVE/i);
       } finally {
         await runtime.close();
       }

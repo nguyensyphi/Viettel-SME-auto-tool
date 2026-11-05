@@ -1,5 +1,17 @@
 import crypto from "node:crypto";
-import { DelayedError, Queue, Worker, type Job } from "bullmq";
+import {
+  AccountCircuitBreaker,
+  KillSwitchController,
+  RedisCircuitBreakerStore,
+  RedisKillSwitchStore,
+} from "@am-sme/config";
+import {
+  DelayedError,
+  Queue,
+  UnrecoverableError,
+  Worker,
+  type Job,
+} from "bullmq";
 import { Redis } from "ioredis";
 import { JobLockManager, RedisJobLockAdapter } from "./job-lock.js";
 import type { JobSubmissionResult } from "./queue-factory.js";
@@ -11,12 +23,16 @@ export interface BullMqRuntimeOptions {
   defaultBackoffMs?: number | undefined;
   deduplicationWindowMs?: number | undefined;
   lockContentionDelayMs?: number | undefined;
+  enableBuiltInSafetyControls?: boolean | undefined;
+  circuitFailureThreshold?: number | undefined;
+  circuitCooldownMs?: number | undefined;
 }
 
 export interface ProtectedJobInput<T = unknown> {
   jobName?: string | undefined;
   idempotencyKey: string;
   lockKey: string;
+  accountId?: string | undefined;
   payload: T;
   maxRetries?: number | undefined;
   backoffDelayMs?: number | undefined;
@@ -25,6 +41,7 @@ export interface ProtectedJobInput<T = unknown> {
 export interface ProtectedJobEnvelope<T = unknown> {
   idempotencyKey: string;
   lockKey: string;
+  accountId?: string | undefined;
   payload: T;
 }
 
@@ -55,6 +72,19 @@ export function toBullMqJobId(idempotencyKey: string): string {
   return `job_${slug}_${digest}`;
 }
 
+function inferAccountId(
+  explicitAccountId: string | undefined,
+  lockKey: string,
+): string | undefined {
+  const trimmed = explicitAccountId?.trim();
+  if (trimmed) return trimmed;
+  if (lockKey.startsWith("account:")) {
+    const extracted = lockKey.slice("account:".length).split(":")[0]?.trim();
+    return extracted || undefined;
+  }
+  return undefined;
+}
+
 export class BullMqQueueRuntime {
   private readonly redisUrl: string;
   private readonly prefix: string;
@@ -65,6 +95,8 @@ export class BullMqQueueRuntime {
 
   private readonly sharedRedis: Redis;
   private readonly lockManager: JobLockManager;
+  private readonly killSwitch?: KillSwitchController | undefined;
+  private readonly circuitBreaker?: AccountCircuitBreaker | undefined;
   private readonly queues = new Map<string, Queue>();
   private readonly workers: Worker[] = [];
   private readonly extraConnections: Redis[] = [];
@@ -87,6 +119,20 @@ export class BullMqQueueRuntime {
         keyPrefix: `${this.prefix}:lock:`,
       }),
     );
+
+    if (options.enableBuiltInSafetyControls) {
+      const keyPrefix = `${this.prefix}:`;
+      this.killSwitch = new KillSwitchController(
+        new RedisKillSwitchStore(this.sharedRedis, { keyPrefix }),
+      );
+      this.circuitBreaker = new AccountCircuitBreaker(
+        new RedisCircuitBreakerStore(this.sharedRedis, { keyPrefix }),
+        {
+          failureThreshold: options.circuitFailureThreshold ?? 5,
+          cooldownMs: options.circuitCooldownMs ?? 300_000,
+        },
+      );
+    }
   }
 
   private getOrCreateQueue(queueName: string): Queue {
@@ -119,6 +165,18 @@ export class BullMqQueueRuntime {
       throw new Error("lockKey is required for distributed JobLock safety");
     }
 
+    if (this.killSwitch && (await this.killSwitch.isKillSwitchActive())) {
+      throw new Error("KILL_SWITCH_ACTIVE: emergency stop rejects new jobs");
+    }
+
+    const accountId = inferAccountId(input.accountId, lockKey);
+    if (this.circuitBreaker && accountId) {
+      const gate = await this.circuitBreaker.canExecute(accountId);
+      if (!gate.allowed) {
+        throw new Error(`CIRCUIT_OPEN: account ${accountId} is halted`);
+      }
+    }
+
     const jobId = toBullMqJobId(idempotencyKey);
     const idempRedisKey = `${this.prefix}:idemp:${queueName}:${crypto
       .createHash("sha256")
@@ -145,6 +203,7 @@ export class BullMqQueueRuntime {
     const envelope: ProtectedJobEnvelope<T> = {
       idempotencyKey,
       lockKey,
+      ...(accountId !== undefined ? { accountId } : {}),
       payload: input.payload,
     };
 
@@ -177,7 +236,22 @@ export class BullMqQueueRuntime {
     const worker = new Worker<ProtectedJobEnvelope<T>>(
       queueName,
       async (job, bullToken) => {
+        if (this.killSwitch && (await this.killSwitch.isKillSwitchActive())) {
+          throw new UnrecoverableError("KILL_SWITCH_ACTIVE: worker halted");
+        }
+
         const lockKey = job.data.lockKey;
+        const accountId = inferAccountId(job.data.accountId, lockKey);
+
+        if (this.circuitBreaker && accountId) {
+          const gate = await this.circuitBreaker.canExecute(accountId);
+          if (!gate.allowed) {
+            throw new UnrecoverableError(
+              `CIRCUIT_OPEN: account ${accountId} halted`,
+            );
+          }
+        }
+
         const lock = await this.lockManager.acquire(lockKey, lockTtlMs);
 
         if (!lock.acquired || !lock.token) {
@@ -190,6 +264,23 @@ export class BullMqQueueRuntime {
 
         try {
           await handler(job.data.payload, job);
+          if (this.circuitBreaker && accountId) {
+            await this.circuitBreaker.recordSuccess(accountId);
+          }
+        } catch (err) {
+          if (
+            this.circuitBreaker &&
+            accountId &&
+            !(err instanceof UnrecoverableError) &&
+            !(err instanceof DelayedError)
+          ) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const trip = await this.circuitBreaker.recordFailure(accountId, msg);
+            if (trip.state === "OPEN") {
+              throw new UnrecoverableError(`CIRCUIT_OPEN: ${msg}`);
+            }
+          }
+          throw err;
         } finally {
           await this.lockManager.release(lockKey, lock.token);
         }
@@ -204,7 +295,9 @@ export class BullMqQueueRuntime {
     worker.on("failed", (job, err) => {
       if (!job) return;
       const maxAttempts = job.opts.attempts ?? 1;
-      if (job.attemptsMade < maxAttempts) return;
+      const permanentlyFailed =
+        err.name === "UnrecoverableError" || job.attemptsMade >= maxAttempts;
+      if (!permanentlyFailed) return;
 
       const writePromise = (async () => {
         const entry: DeadLetterEntry = {

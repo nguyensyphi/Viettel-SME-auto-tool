@@ -10,6 +10,7 @@
     "./bullmq-runtime": "./src/bullmq-runtime.ts"
   },
   "dependencies": {
+    "@am-sme/config": "workspace:*",
     "bullmq": "^5.41.0",
     "ioredis": "^5.5.0"
   }

@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./kill-switch": "./src/kill-switch.ts",
+    "./circuit-breaker": "./src/circuit-breaker.ts",
+    "./rate-limiter": "./src/rate-limiter.ts"
   }
 }
