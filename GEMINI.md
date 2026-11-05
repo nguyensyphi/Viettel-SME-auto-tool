@@ -30,3 +30,4 @@
    - Package manager: `corepack pnpm` in `am-viettel-sme/`.
    - Test runner: `corepack pnpm test` (Vitest).
    - Node version: Node.js 22+.
+

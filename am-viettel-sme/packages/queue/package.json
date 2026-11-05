@@ -1,0 +1,15 @@
+{
+  "name": "@am-sme/queue",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./job-lock": "./src/job-lock.ts",
+    "./queue-factory": "./src/queue-factory.ts"
+  },
+  "dependencies": {
+    "bullmq": "^5.41.0",
+    "ioredis": "^5.5.0"
+  }
+}
