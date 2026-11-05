@@ -7,6 +7,8 @@
     ".": "./src/index.ts",
     "./content-parser": "./src/content-parser.ts",
     "./google-docs-connector": "./src/google-docs-connector.ts",
-    "./google-drive-connector": "./src/google-drive-connector.ts"
+    "./google-drive-connector": "./src/google-drive-connector.ts",
+    "./media-matcher": "./src/media-matcher.ts",
+    "./publishing-scheduler": "./src/publishing-scheduler.ts"
   }
 }
