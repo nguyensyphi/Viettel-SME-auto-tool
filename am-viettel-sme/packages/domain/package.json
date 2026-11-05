@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./contactability": "./src/contactability/policy.ts",
-    "./classification": "./src/classification/customer-classifier.ts"
+    "./classification": "./src/classification/customer-classifier.ts",
+    "./product-matching": "./src/product-matching/matcher.ts"
   }
 }
