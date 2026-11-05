@@ -42,15 +42,30 @@ importers:
       '@am-sme/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@am-sme/browser-automation':
+        specifier: workspace:*
+        version: link:../../packages/browser-automation
+      '@am-sme/campaigns':
+        specifier: workspace:*
+        version: link:../../packages/campaigns
       '@am-sme/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@am-sme/content-library':
+        specifier: workspace:*
+        version: link:../../packages/content-library
       '@am-sme/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@am-sme/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@am-sme/excel-import':
         specifier: workspace:*
         version: link:../../packages/excel-import
+      '@am-sme/telegram-bot':
+        specifier: workspace:*
+        version: link:../../packages/telegram-bot
       '@prisma/adapter-pg':
         specifier: 7.10.1
         version: 7.10.1

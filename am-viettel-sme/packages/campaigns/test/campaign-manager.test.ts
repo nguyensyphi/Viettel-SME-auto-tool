@@ -191,3 +191,4 @@ describe("GroupManager & CampaignManager — Partner & Group Campaign Automation
     ).rejects.toThrow(/KILL_SWITCH_ACTIVE/);
   });
 });
+

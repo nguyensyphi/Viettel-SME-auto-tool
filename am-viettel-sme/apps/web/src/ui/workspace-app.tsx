@@ -8,6 +8,9 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { AccountsView } from "./accounts-view.js";
+import { CalendarView } from "./calendar-view.js";
+import { CampaignView } from "./campaign-view.js";
 
 type Principal = {
   userId: string;
@@ -15,7 +18,16 @@ type Principal = {
   role: "AM" | "MANAGER" | "ADMIN";
   teamId: string | null;
 };
-type Tab = "home" | "leads" | "import" | "planner" | "team" | "audit";
+type Tab =
+  | "home"
+  | "leads"
+  | "import"
+  | "planner"
+  | "accounts"
+  | "calendar"
+  | "campaigns"
+  | "team"
+  | "audit";
 type Lead = {
   id: string;
   companyName: string;
@@ -382,6 +394,9 @@ export function WorkspaceApp({
       { id: "leads", label: "Lead" },
       { id: "import", label: "Import Excel" },
       { id: "planner", label: "Tác vụ & Planner" },
+      { id: "accounts", label: "Tài khoản & Phiên" },
+      { id: "calendar", label: "Lịch nội dung" },
+      { id: "campaigns", label: "Chiến dịch & CTV" },
       ...(canSeeAdmin
         ? [
             { id: "team" as const, label: "Nhóm & quyền" },
@@ -437,6 +452,20 @@ export function WorkspaceApp({
         setPlannerLeads(leadResult.items ?? []);
         setPlannerUsers(
           (usersResult.items ?? []).filter((user) => user.role === "AM"),
+        );
+      }
+      if (selected === "accounts") {
+        setData(await api("/social-accounts").catch(() => ({ items: [] })));
+      }
+      if (selected === "calendar") {
+        setData(await api("/publishing-calendar").catch(() => ({ items: [] })));
+      }
+      if (selected === "campaigns") {
+        setData(
+          await api("/campaigns-overview").catch(() => ({
+            campaigns: [],
+            partners: [],
+          })),
         );
       }
       if (selected === "team") {
@@ -1180,6 +1209,25 @@ export function WorkspaceApp({
               )}
             </section>
           )}
+          {tab === "accounts" && (
+            <AccountsView
+              data={data}
+              onTriggerQrLogin={(accountId, platform) => {
+                setNotice(
+                  `Đã gửi yêu cầu mở trình duyệt quét QR cho ${platform} (${accountId}).`,
+                );
+              }}
+            />
+          )}
+          {tab === "calendar" && (
+            <CalendarView
+              data={data}
+              onApprovePost={(contentId) => {
+                setNotice(`Đã ghi nhận duyệt bài ${contentId}.`);
+              }}
+            />
+          )}
+          {tab === "campaigns" && <CampaignView data={data} />}
           {tab === "audit" && (
             <section className="panel">
               <div className="panel-heading">

@@ -286,9 +286,9 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Create: `am-viettel-sme/apps/web/src/ui/campaign-view.tsx`
 - Test: `am-viettel-sme/apps/web/test/full-system-e2e.test.ts`
 
-- [ ] **Step 1: Viết test E2E kiểm tra toàn bộ luồng từ Import Lead -> Match Sản Phẩm -> Lập Lịch Đăng Bài -> Quản Lý CTV**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Hoàn thiện các giao diện Dashboard trên Next.js**
-- [ ] **Step 4: Chạy test xác nhận PASS toàn bộ**
-- [ ] **Step 5: Commit và hoàn thành**
+- [x] **Step 1: Viết test E2E kiểm tra toàn bộ luồng từ Import Lead -> Match Sản Phẩm -> Lập Lịch Đăng Bài -> Quản Lý CTV**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Hoàn thiện các giao diện Dashboard trên Next.js**
+- [x] **Step 4: Chạy test xác nhận PASS toàn bộ**
+- [x] **Step 5: Commit và hoàn thành**
 

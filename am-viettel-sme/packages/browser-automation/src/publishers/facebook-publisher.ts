@@ -1,4 +1,3 @@
-import type { BrowserPageHandle } from "../types.js";
 import type { PlatformPublishInput } from "./zalo-publisher.js";
 
 function computeNaturalTypingDelayMs(overrideDelayMs?: number | undefined): number {
@@ -45,3 +44,4 @@ export async function publishToFacebook(input: PlatformPublishInput): Promise<vo
     await page.locator(submitSelector).first().click();
   }
 }
+

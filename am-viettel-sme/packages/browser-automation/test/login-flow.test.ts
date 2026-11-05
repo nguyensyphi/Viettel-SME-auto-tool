@@ -201,3 +201,4 @@ describe("Interactive Login & Session Health Monitor (Task 7)", () => {
     expect(mockCtx.isClosed).toBe(true);
   });
 });
+

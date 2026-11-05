@@ -62,3 +62,4 @@ export class GoogleDocsConnector {
     return parseStructuredPosts(chunks.join(""));
   }
 }
+

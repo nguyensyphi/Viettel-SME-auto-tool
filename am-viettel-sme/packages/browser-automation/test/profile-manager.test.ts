@@ -9,7 +9,7 @@ import {
 } from "../src/profile-manager.js";
 
 function createFakeContext(): PersistentContextHandle & { closed: boolean } {
-  let closeListeners: Array<() => void> = [];
+  const closeListeners: Array<() => void> = [];
   const handle = {
     closed: false,
     pages: () => [],

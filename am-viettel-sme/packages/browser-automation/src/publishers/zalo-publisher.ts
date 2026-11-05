@@ -52,3 +52,4 @@ export async function publishToZalo(input: PlatformPublishInput): Promise<void> 
     await page.locator(submitSelector).first().click();
   }
 }
+
