@@ -1,0 +1,16 @@
+{
+  "name": "@am-sme/browser-automation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./profile-manager": "./src/profile-manager.ts"
+  },
+  "dependencies": {
+    "@am-sme/config": "workspace:*",
+    "playwright-core": "^1.51.0"
+  }
+}
+
