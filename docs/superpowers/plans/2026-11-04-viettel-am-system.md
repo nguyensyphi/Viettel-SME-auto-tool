@@ -58,11 +58,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Consumes: `@am-sme/config` (Redis URL).
 - Produces: `createQueue(name: string)`, `acquireJobLock(key: string, ttlMs: number): Promise<boolean>`, `releaseJobLock(key: string): Promise<void>`.
 
-- [ ] **Step 1: Viết failing test cho Queue & Job Lock**
-- [ ] **Step 2: Chạy test để xác nhận FAIL**
-- [ ] **Step 3: Cài đặt BullMQ và viết module quản lý Lock & Idempotency**
-- [ ] **Step 4: Chạy test để xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test cho Queue & Job Lock**
+- [x] **Step 2: Chạy test để xác nhận FAIL**
+- [x] **Step 3: Cài đặt BullMQ và viết module quản lý Lock & Idempotency**
+- [x] **Step 4: Chạy test để xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -78,11 +78,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Consumes: Raw lead attributes (`companyName`, `industry`, `notes`, `source`).
 - Produces: `classifyCustomer(input: CustomerClassificationInput): CustomerClassificationResult` trả về `customerType` (DIRECT_A, PARTNER_B, CTV_C, UNKNOWN_D), `confidenceScore` (0.0..1.0), `reasons: string[]`, `reviewStatus: "AUTO_APPROVED" | "PENDING_REVIEW"`.
 
-- [ ] **Step 1: Viết failing test cho các kịch bản phân loại: kế toán thuế -> Nhóm B, logistics/chữ ký số -> Nhóm A, ngân hàng -> Nhóm C, thiếu thông tin -> Nhóm D (confidence < 0.8)**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai luật phân loại và thuật toán chấm điểm confidence**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test cho các kịch bản phân loại: kế toán thuế -> Nhóm B, logistics/chữ ký số -> Nhóm A, ngân hàng -> Nhóm C, thiếu thông tin -> Nhóm D (confidence < 0.8)**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai luật phân loại và thuật toán chấm điểm confidence**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -96,11 +96,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Consumes: `CustomerClassificationResult`, thông tin ngành nghề/nhu cầu.
 - Produces: `matchProducts(lead: LeadProfile): ProductMatchRecommendation[]` với 15 sản phẩm Viettel SME, tín hiệu sàng lọc, câu hỏi kiểm tra và cờ `policyStatus: "CAN_XAC_NHAN_LAI"`.
 
-- [ ] **Step 1: Viết failing test kiểm tra matching logic cho 15 sản phẩm từ ma trận**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai catalog JSON và Matcher Service**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test kiểm tra matching logic cho 15 sản phẩm từ ma trận**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai catalog JSON và Matcher Service**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -114,11 +114,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 - Consumes: `TemplateContext` (`company_name`, `contact_person`, `product_name`, `am_name`, `benefit`, `price`,...).
 - Produces: `renderMessage(templateId: string, context: TemplateContext): RenderedMessage` kèm kiểm tra validation biến bắt buộc.
 
-- [ ] **Step 1: Viết failing test cho việc render template với biến động và chặn khi thiếu biến hoặc sai đối tượng**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Cài đặt Template Engine (hỗ trợ versioning và gắn đính kèm file/ảnh)**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test cho việc render template với biến động và chặn khi thiếu biến hoặc sai đối tượng**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Cài đặt Template Engine (hỗ trợ versioning và gắn đính kèm file/ảnh)**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -132,11 +132,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `isKillSwitchActive(): Promise<boolean>`, `activateKillSwitch(reason: string)`, `checkRateLimit(key: string, limit: number, windowMs: number)`.
 
-- [ ] **Step 1: Viết failing test: khi Kill Switch bật thì từ chối mọi background job mới, Circuit Breaker tự ngắt sau 5 lỗi liên tiếp**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai các module an toàn qua Redis/Memory state**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test: khi Kill Switch bật thì từ chối mọi background job mới, Circuit Breaker tự ngắt sau 5 lỗi liên tiếp**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai các module an toàn qua Redis/Memory state**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
