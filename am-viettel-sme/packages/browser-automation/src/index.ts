@@ -2,3 +2,6 @@ export * from "./types.js";
 export * from "./profile-manager.js";
 export * from "./login-flow.js";
 export * from "./health-monitor.js";
+export * from "./publishing-worker.js";
+export * from "./publishers/zalo-publisher.js";
+export * from "./publishers/facebook-publisher.js";

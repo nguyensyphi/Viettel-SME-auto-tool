@@ -152,11 +152,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `launchAccountBrowser(accountId: string, platform: "ZALO" | "FACEBOOK", options: { headless: boolean }): Promise<BrowserContext>`, `getProfileDir(accountId: string): string`.
 
-- [ ] **Step 1: Viết failing test khởi tạo và cô lập profile độc lập theo `accountId`**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Playwright Persistent Context manager với thư mục profile riêng biệt**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test khởi tạo và cô lập profile độc lập theo `accountId`**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Playwright Persistent Context manager với thư mục profile riêng biệt**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -169,11 +169,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `startLoginSession(accountId: string, platform: "ZALO" | "FACEBOOK"): Promise<{ status: "CONNECTED" | "TIMEOUT" | "FAILED" }>`, `checkSessionHealth(accountId: string, platform: string): Promise<boolean>`.
 
-- [ ] **Step 1: Viết failing test mô phỏng phát hiện session thành công hoặc văng ra màn hình đăng nhập**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai luồng mở browser (headless: false) để AM quét QR Zalo / đăng nhập FB và tự động lưu session**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test mô phỏng phát hiện session thành công hoặc văng ra màn hình đăng nhập**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai luồng mở browser (headless: false) để AM quét QR Zalo / đăng nhập FB và tự động lưu session**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -188,11 +188,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `importPostsFromDoc(documentId: string): Promise<ParsedPost[]>`, `syncMediaAssets(folderId: string): Promise<MediaAsset[]>`.
 
-- [ ] **Step 1: Viết failing test parser tách bài viết từ định dạng Docs chuẩn (`CONTENT_ID`, `TOPIC`, `CONTENT`)**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Google API connectors và cache ảnh nội bộ**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test parser tách bài viết từ định dạng Docs chuẩn (`CONTENT_ID`, `TOPIC`, `CONTENT`)**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Google API connectors và cache ảnh nội bộ**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -205,11 +205,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `matchMediaToPost(post: ParsedPost): MediaAsset[]`, `schedulePost(postId: string, accountId: string, publishTime: Date)`.
 
-- [ ] **Step 1: Viết failing test ghép ảnh theo `content_id`/`topic`, chặn khi thiếu ảnh bắt buộc, quản lý vòng đời `DRAFT -> APPROVED -> SCHEDULED`**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Media Matcher và Scheduler**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test ghép ảnh theo `content_id`/`topic`, chặn khi thiếu ảnh bắt buộc, quản lý vòng đời `DRAFT -> APPROVED -> SCHEDULED`**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Media Matcher và Scheduler**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 
@@ -223,11 +223,11 @@ Phase 4: Operations & Control (Telegram Admin Bot & Dashboard Hardening)
 **Interfaces:**
 - Produces: `executePublishingJob(job: PublishingJob): Promise<PublishingResult>`. Hỗ trợ cả 2 chế độ: Full-Auto và Semi-Auto (AM xác nhận).
 
-- [ ] **Step 1: Viết failing test điều phối job đăng bài: mở browser, gõ phím có delay ngẫu nhiên, đính kèm ảnh, chụp ảnh màn hình làm bằng chứng**
-- [ ] **Step 2: Chạy test xác nhận FAIL**
-- [ ] **Step 3: Triển khai Publishing Worker và các adapter Zalo/Facebook**
-- [ ] **Step 4: Chạy test xác nhận PASS**
-- [ ] **Step 5: Commit task**
+- [x] **Step 1: Viết failing test điều phối job đăng bài: mở browser, gõ phím có delay ngẫu nhiên, đính kèm ảnh, chụp ảnh màn hình làm bằng chứng**
+- [x] **Step 2: Chạy test xác nhận FAIL**
+- [x] **Step 3: Triển khai Publishing Worker và các adapter Zalo/Facebook**
+- [x] **Step 4: Chạy test xác nhận PASS**
+- [x] **Step 5: Commit task**
 
 ---
 

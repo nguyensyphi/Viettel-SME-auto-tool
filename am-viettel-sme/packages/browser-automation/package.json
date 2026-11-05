@@ -8,7 +8,8 @@
     "./types": "./src/types.ts",
     "./profile-manager": "./src/profile-manager.ts",
     "./login-flow": "./src/login-flow.ts",
-    "./health-monitor": "./src/health-monitor.ts"
+    "./health-monitor": "./src/health-monitor.ts",
+    "./publishing-worker": "./src/publishing-worker.ts"
   },
   "dependencies": {
     "@am-sme/config": "workspace:*",
