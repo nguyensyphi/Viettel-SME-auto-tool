@@ -1,0 +1,12 @@
+{
+  "name": "@am-sme/content-library",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./content-parser": "./src/content-parser.ts",
+    "./google-docs-connector": "./src/google-docs-connector.ts",
+    "./google-drive-connector": "./src/google-drive-connector.ts"
+  }
+}

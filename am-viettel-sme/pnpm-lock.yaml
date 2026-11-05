@@ -115,6 +115,8 @@ importers:
 
   packages/config: {}
 
+  packages/content-library: {}
+
   packages/database:
     dependencies:
       '@am-sme/auth':
