@@ -361,5 +361,75 @@ it("renders AI Lead Scoring Tier badge in Lead list and 100-point rubric breakdo
   expect(screen.getByText(/Nhu cầu SP dự kiến/i)).toBeTruthy();
 });
 
+it("supports filtering and searching leads in LeadList", async () => {
+  const principal = { userId: "am-1", workspaceId: "workspace-1", role: "AM" };
+  const mockLeads = [
+    {
+      id: "lead-1",
+      companyName: "Tân Bình Logistics",
+      stage: "NEW",
+      district: "Dĩ An",
+      leadScore: { totalScore: 90, tier: "A" },
+    },
+    {
+      id: "lead-2",
+      companyName: "May Mặc Sóng Thần",
+      stage: "NEW",
+      district: "Thuận An",
+      leadScore: { totalScore: 65, tier: "B" },
+    },
+  ];
+
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return new Response(JSON.stringify({ user: principal }));
+      if (url.includes("/leads?limit=")) return new Response(JSON.stringify({ items: mockLeads, total: 2 }));
+      return new Response(JSON.stringify([]));
+    }),
+  );
+
+  render(<WorkspaceApp />);
+  const leadTabBtn = await screen.findByRole("button", { name: "Lead" });
+  fireEvent.click(leadTabBtn);
+
+  expect(await screen.findByText("Tân Bình Logistics")).toBeTruthy();
+  expect(screen.getByText("May Mặc Sóng Thần")).toBeTruthy();
+
+  // Test search input
+  const searchInput = screen.getByPlaceholderText(/Tìm theo tên doanh nghiệp/i);
+  fireEvent.change(searchInput, { target: { value: "May Mặc" } });
+  expect(screen.queryByText("Tân Bình Logistics")).toBeNull();
+  expect(screen.getByText("May Mặc Sóng Thần")).toBeTruthy();
+
+  // Reset search and test Tier filter
+  fireEvent.change(searchInput, { target: { value: "" } });
+  const tierSelect = screen.getByLabelText(/Lọc theo Tier/i);
+  fireEvent.change(tierSelect, { target: { value: "A" } });
+  expect(screen.getByText("Tân Bình Logistics")).toBeTruthy();
+  expect(screen.queryByText("May Mặc Sóng Thần")).toBeNull();
+});
+
+it("renders Top KPI Overview row on TodayDashboard", async () => {
+  const principal = { userId: "am-1", workspaceId: "workspace-1", role: "AM" };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return new Response(JSON.stringify({ user: principal }));
+      if (url.includes("/tasks?status=")) return new Response(JSON.stringify([]));
+      return new Response(JSON.stringify([]));
+    }),
+  );
+
+  render(<WorkspaceApp />);
+  expect(await screen.findByText(/Tổng quan hoạt động hôm nay/i)).toBeTruthy();
+  expect(screen.getByText(/Tác vụ cần làm/i)).toBeTruthy();
+  expect(screen.getByText(/Phễu SME & Lead/i)).toBeTruthy();
+  expect(screen.getByText(/Tự động hoá MXH/i)).toBeTruthy();
+});
+
+
 
 

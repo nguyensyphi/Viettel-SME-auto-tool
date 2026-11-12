@@ -169,6 +169,23 @@ describe("MOD-PC-003 Dashboard UI (CampaignView — Groups, Dispatch, Referrals 
         expect.any(String),
       );
     });
+
+    // 6. Displays referrals table and records contract conversion for REFERRED item
+    expect(screen.getByText("Công ty TNHH Đại Phát")).toBeTruthy();
+    expect(screen.getByText("3701122334")).toBeTruthy();
+    const convertBtn = screen.getByRole("button", { name: /Chốt hợp đồng & Hoa hồng/i });
+    fireEvent.click(convertBtn);
+    const confirmConvertBtn = screen.getByRole("button", { name: /Xác nhận tạo Conversion/i });
+    fireEvent.click(confirmConvertBtn);
+    await vi.waitFor(() => {
+      expect(onRecordConversion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          referralId: "ref_ui_01",
+          contractRevenueVnd: expect.any(Number),
+          commissionRatePercent: expect.any(Number),
+        }),
+      );
+    });
   });
 
   it("prevents creating Zalo outreach batch with 0 leads and caps at max 30 leads (Anti-Ban Guard)", async () => {

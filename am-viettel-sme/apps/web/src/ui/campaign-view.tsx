@@ -314,6 +314,12 @@ export function CampaignView({
   const [refCompany, setRefCompany] = useState("");
   const [refTaxCode, setRefTaxCode] = useState("");
   const [refProducts, setRefProducts] = useState("CA,SINVOICE");
+  const [activeConvertModal, setActiveConvertModal] = useState<{
+    referral: ReferralSummaryItem;
+    revenue: number;
+    commissionRate: number;
+    policyNote: string;
+  } | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1306,47 +1312,237 @@ export function CampaignView({
             </button>
           </form>
 
-          {conversions.length > 0 && (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Mã HĐ</th>
-                    <th>Doanh thu</th>
-                    <th>Hoa hồng</th>
-                    <th>Trạng thái</th>
-                    <th>Chi trả</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {conversions.map((conv) => (
-                    <tr key={conv.conversionId}>
-                      <td>{conv.conversionId}</td>
-                      <td>{conv.contractRevenueVnd.toLocaleString("vi-VN")} đ</td>
-                      <td>{conv.commissionAmountVnd.toLocaleString("vi-VN")} đ</td>
-                      <td>{conv.payoutStatus}</td>
-                      <td>
-                        {conv.payoutStatus === "APPROVED_PENDING_PAYOUT" ? (
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() =>
-                              onMarkConversionPaid?.(
-                                conv.conversionId,
-                                `UNC-${conv.conversionId}`,
-                              )
-                            }
-                          >
-                            Xác nhận đã chi trả
-                          </button>
-                        ) : (
-                          <span className="muted">{conv.payoutReference ?? "Đã chi"}</span>
-                        )}
-                      </td>
+          {referrals.length > 0 && (
+            <div style={{ marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: 600, margin: "0 0 8px 0" }}>
+                Danh sách SME được giới thiệu ({referrals.length})
+              </h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mã Referral</th>
+                      <th>Doanh nghiệp</th>
+                      <th>Mã số thuế</th>
+                      <th>Dịch vụ</th>
+                      <th>Trạng thái</th>
+                      <th>Thao tác</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {referrals.map((ref) => (
+                      <tr key={ref.referralId}>
+                        <td><code>{ref.referralId}</code></td>
+                        <td><strong>{ref.companyName}</strong></td>
+                        <td>{ref.normalizedTaxCode}</td>
+                        <td>{ref.productCodes.join(", ") || "—"}</td>
+                        <td>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              backgroundColor: ref.status === "CONVERTED" ? "#ecfdf5" : "#eff6ff",
+                              color: ref.status === "CONVERTED" ? "#059669" : "#2563eb",
+                            }}
+                          >
+                            {ref.status}
+                          </span>
+                        </td>
+                        <td>
+                          {ref.status === "REFERRED" ? (
+                            <button
+                              type="button"
+                              className="primary"
+                              style={{ fontSize: "12px", padding: "4px 8px" }}
+                              onClick={() =>
+                                setActiveConvertModal({
+                                  referral: ref,
+                                  revenue: 5000000,
+                                  commissionRate: 10,
+                                  policyNote: "Chính sách hoa hồng CTV Q4/2026",
+                                })
+                              }
+                            >
+                              Chốt hợp đồng &amp; Hoa hồng
+                            </button>
+                          ) : (
+                            <span className="muted">Đã tạo Hợp đồng</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {conversions.length > 0 && (
+            <div>
+              <h3 style={{ fontSize: "14px", fontWeight: 600, margin: "0 0 8px 0" }}>
+                Danh sách Hoa hồng CTV chờ chi trả ({conversions.length})
+              </h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mã HĐ</th>
+                      <th>Doanh thu</th>
+                      <th>Hoa hồng</th>
+                      <th>Trạng thái</th>
+                      <th>Chi trả</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conversions.map((conv) => (
+                      <tr key={conv.conversionId}>
+                        <td><code>{conv.conversionId}</code></td>
+                        <td>{conv.contractRevenueVnd.toLocaleString("vi-VN")} đ</td>
+                        <td><strong>{conv.commissionAmountVnd.toLocaleString("vi-VN")} đ</strong></td>
+                        <td>{conv.payoutStatus}</td>
+                        <td>
+                          {conv.payoutStatus === "APPROVED_PENDING_PAYOUT" ? (
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() =>
+                                onMarkConversionPaid?.(
+                                  conv.conversionId,
+                                  `UNC-${conv.conversionId}`,
+                                )
+                              }
+                            >
+                              Xác nhận đã chi trả
+                            </button>
+                          ) : (
+                            <span className="muted">{conv.payoutReference ?? "Đã chi"}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeConvertModal && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.5)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 9999,
+              }}
+            >
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: "12px",
+                  padding: "24px",
+                  maxWidth: "480px",
+                  width: "90%",
+                  boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
+                }}
+              >
+                <h3 style={{ margin: "0 0 12px 0" }}>
+                  Chốt Hợp đồng &amp; Ghi nhận Hoa hồng CTV
+                </h3>
+                <p className="muted" style={{ fontSize: "13px", marginBottom: "16px" }}>
+                  Doanh nghiệp: <strong>{activeConvertModal.referral.companyName}</strong> (MST: {activeConvertModal.referral.normalizedTaxCode})
+                </p>
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (isSubmitting) return;
+                    setIsSubmitting(true);
+                    try {
+                      await onRecordConversion?.({
+                        conversionId: `conv_${Date.now()}`,
+                        referralId: activeConvertModal.referral.referralId,
+                        contractRevenueVnd: activeConvertModal.revenue,
+                        commissionRatePercent: activeConvertModal.commissionRate,
+                        policyReferenceNote: activeConvertModal.policyNote,
+                      });
+                      setActiveConvertModal(null);
+                    } finally {
+                      setIsSubmitting(false);
+                    }
+                  }}
+                  style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                >
+                  <label>
+                    Doanh thu Hợp đồng (VNĐ)
+                    <input
+                      type="number"
+                      min={100000}
+                      step={100000}
+                      value={activeConvertModal.revenue}
+                      onChange={(e) =>
+                        setActiveConvertModal({
+                          ...activeConvertModal,
+                          revenue: Number(e.target.value),
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Tỷ lệ Hoa hồng CTV (%)
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      step={1}
+                      value={activeConvertModal.commissionRate}
+                      onChange={(e) =>
+                        setActiveConvertModal({
+                          ...activeConvertModal,
+                          commissionRate: Number(e.target.value),
+                        })
+                      }
+                      required
+                    />
+                  </label>
+                  <p style={{ fontSize: "13px", color: "#059669", fontWeight: 600, margin: 0 }}>
+                    💰 Hoa hồng ước tính: {((activeConvertModal.revenue * activeConvertModal.commissionRate) / 100).toLocaleString("vi-VN")} đ
+                  </p>
+                  <label>
+                    Căn cứ chính sách
+                    <input
+                      type="text"
+                      value={activeConvertModal.policyNote}
+                      onChange={(e) =>
+                        setActiveConvertModal({
+                          ...activeConvertModal,
+                          policyNote: e.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setActiveConvertModal(null)}
+                      disabled={isSubmitting}
+                    >
+                      Hủy
+                    </button>
+                    <button type="submit" className="primary" disabled={isSubmitting}>
+                      {isSubmitting ? "Đang xử lý..." : "Xác nhận tạo Conversion"}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </section>

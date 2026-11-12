@@ -2,7 +2,7 @@
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { UIHealthInspector } from "../src/ui/ui-health-inspector.js";
+import { UIHealthInspector, runDefaultClientSmokeCheck } from "../src/ui/ui-health-inspector.js";
 
 afterEach(() => {
   cleanup();
@@ -84,5 +84,24 @@ describe("UIHealthInspector (In-App UI/UX Diagnostic & Self-Test Panel)", () => 
       }),
     );
     expect(container.firstChild).toBeNull();
+  });
+
+  it("runDefaultClientSmokeCheck pings valid REST endpoints including /contents and /social-accounts", async () => {
+    const fetchSpy = vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const report = await runDefaultClientSmokeCheck();
+    expect(report.metrics.total).toBeGreaterThanOrEqual(4);
+    const calledUrls = fetchSpy.mock.calls.map((call) => call[0]);
+    expect(calledUrls).toContain("/api/v1/auth/me");
+    expect(calledUrls).toContain("/api/v1/leads");
+    expect(calledUrls).toContain("/api/v1/campaigns-overview");
+    expect(calledUrls).toContain("/api/v1/contents");
+    expect(calledUrls).toContain("/api/v1/social-accounts");
+    expect(calledUrls).not.toContain("/api/v1/content/posts");
+    expect(calledUrls).not.toContain("/api/v1/fb-poster/accounts");
   });
 });

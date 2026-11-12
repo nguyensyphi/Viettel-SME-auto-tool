@@ -36,6 +36,7 @@ type Lead = {
   companyName: string;
   stage: string;
   district?: string | null;
+  industry?: string | null;
   ownerName?: string | null;
   contacts?: readonly {
     id: string;
@@ -242,6 +243,24 @@ function formatUserFacingError(error: string): string {
   }
   if (error.includes("INVALID_DOCUMENT_FORMAT")) {
     return "Định dạng tài liệu không hợp lệ. Vui lòng kiểm tra lại cấu trúc bài viết.";
+  }
+  if (error.includes("KILL_SWITCH_ACTIVE")) {
+    return "Công tắc dừng khẩn cấp toàn hệ thống (Kill Switch) đang bật. Toàn bộ tác vụ đăng bài và tiếp cận tạm thời dừng để bảo vệ an toàn tài khoản AM.";
+  }
+  if (error.includes("CIRCUIT_BREAKER_OPEN")) {
+    return "Tài khoản tạm thời bị ngắt bảo vệ (Circuit Breaker OPEN) do phát hiện lỗi liên tiếp. Vui lòng khôi phục Circuit tại tab Tài khoản & Phiên.";
+  }
+  if (error.includes("ACCOUNT_NOT_CONNECTED")) {
+    return "Tài khoản mạng xã hội chưa được kết nối hoặc phiên đăng nhập đã hết hạn. Vui lòng quét lại QR.";
+  }
+  if (error.includes("DUPLICATE_TAX_CODE") || error.includes("TAX_CODE_ALREADY_EXISTS")) {
+    return "Mã số thuế của doanh nghiệp đã tồn tại trong hệ thống. Đã bảo lưu chống trùng lặp.";
+  }
+  if (error.includes("OUTREACH_BUSY")) {
+    return "Đang có đợt gửi tin nhắn tiếp cận đang chạy. Vui lòng chờ hoàn tất đợt hiện tại.";
+  }
+  if (error.includes("CHECKPOINT_DETECTED")) {
+    return "Phát hiện tài khoản bị yêu cầu xác minh bảo mật (Checkpoint / 2FA). Vui lòng dùng nút 'Mở trình duyệt đăng nhập' để xác thực trực tiếp trên Google Chrome.";
   }
   return error;
 }
@@ -465,6 +484,11 @@ export function WorkspaceApp({
   const loadSeqRef = useRef(0);
   const lastFetchedAtRef = useRef<Record<string, number>>({});
   const CACHE_TTL_MS = 60_000;
+  const invalidateTabs = (...targetTabs: Tab[]) => {
+    for (const t of targetTabs) {
+      delete lastFetchedAtRef.current[t];
+    }
+  };
   const [commitIdempotencyKey, setCommitIdempotencyKey] = useState("");
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [decisions, setDecisions] = useState<Record<number, string>>({});
@@ -1231,8 +1255,8 @@ export function WorkspaceApp({
             ))}
           </nav>
           <div className="sidebar-note">
-            <strong>Local-first · P0</strong>
-            <span>Excel là nguồn dữ liệu. Không có gửi tin Zalo/Telegram.</span>
+            <strong>Tự động hoá SME Viettel</strong>
+            <span>Đa kênh Facebook, Zalo, Google Drive &amp; Excel.</span>
           </div>
         </aside>
         <main className="main-content">
@@ -1257,6 +1281,11 @@ export function WorkspaceApp({
               onComplete={(id) => void completeTask(id)}
               onDefer={(id) => void deferTask(id)}
               onOpenPlanner={() => setTab("planner")}
+              onSwitchTab={(target) => {
+                activeTabRef.current = target;
+                setTab(target);
+                void loadTab(target);
+              }}
             />
           )}
           {tab === "leads" && (
@@ -1368,6 +1397,11 @@ export function WorkspaceApp({
               onValidate={validateImport}
               onApprove={approveImport}
               onCommit={commitImport}
+              onSwitchToLeads={() => {
+                activeTabRef.current = "leads";
+                setTab("leads");
+                void loadTab("leads", { force: true });
+              }}
             />
           )}
           {tab === "planner" && (
@@ -1562,8 +1596,9 @@ export function WorkspaceApp({
                       `/social-accounts/${encodeURIComponent(accountId)}/qr-login`,
                       jsonInit("POST", { platform }),
                     );
+                    invalidateTabs("accounts", "fb-poster");
                     if (activeTabRef.current === "accounts") {
-                      await loadTab("accounts");
+                      await loadTab("accounts", { force: true });
                     }
                     setNotice(
                       `Đã khởi chạy cửa sổ Playwright quét QR cho ${platform} (${accountId}).`,
@@ -1585,8 +1620,9 @@ export function WorkspaceApp({
                       `/social-accounts/${encodeURIComponent(accountId)}/connect`,
                       jsonInit("POST", { platform }),
                     );
+                    invalidateTabs("accounts", "fb-poster", "campaigns");
                     if (activeTabRef.current === "accounts") {
-                      await loadTab("accounts");
+                      await loadTab("accounts", { force: true });
                     }
                     setNotice(
                       `Đã kết nối thành công tài khoản ${platform} (${accountId})!`,
@@ -1607,8 +1643,9 @@ export function WorkspaceApp({
                     `/social-accounts`,
                     jsonInit("POST", { accountId, platform }),
                   );
+                  invalidateTabs("accounts", "fb-poster");
                   if (activeTabRef.current === "accounts") {
-                    await loadTab("accounts");
+                    await loadTab("accounts", { force: true });
                   }
                   setNotice(`Đã khai báo tài khoản mới ${platform} (${accountId}).`);
                 } catch (cause) {
@@ -1626,8 +1663,9 @@ export function WorkspaceApp({
                     `/ops/kill-switch`,
                     jsonInit("POST", { active, ...(reason ? { reason } : {}) }),
                   );
+                  invalidateTabs("accounts", "fb-poster", "calendar", "campaigns", "home");
                   if (activeTabRef.current === "accounts") {
-                    await loadTab("accounts");
+                    await loadTab("accounts", { force: true });
                   }
                   setNotice(
                     active
@@ -1649,8 +1687,9 @@ export function WorkspaceApp({
                     `/social-accounts/${encodeURIComponent(accountId)}/reset-circuit`,
                     jsonInit("POST", { platform }),
                   );
+                  invalidateTabs("accounts", "fb-poster");
                   if (activeTabRef.current === "accounts") {
-                    await loadTab("accounts");
+                    await loadTab("accounts", { force: true });
                   }
                   setNotice(
                     `Đã khôi phục Circuit Breaker cho tài khoản ${platform} (${accountId}).`,
@@ -1676,8 +1715,9 @@ export function WorkspaceApp({
                       `/publishing-calendar/${encodeURIComponent(contentId)}/approve`,
                       jsonInit("POST", {}),
                     );
+                    invalidateTabs("calendar", "fb-poster");
                     if (activeTabRef.current === "calendar") {
-                      await loadTab("calendar");
+                      await loadTab("calendar", { force: true });
                     }
                     setNotice(`Đã ghi nhận duyệt bài ${contentId}.`);
                   } catch (cause) {
@@ -1693,8 +1733,9 @@ export function WorkspaceApp({
                 setError("");
                 try {
                   await api(`/publishing-calendar`, jsonInit("POST", input));
+                  invalidateTabs("calendar", "fb-poster", "home");
                   if (activeTabRef.current === "calendar") {
-                    await loadTab("calendar");
+                    await loadTab("calendar", { force: true });
                   }
                   setNotice(`Đã lên lịch thành công bài viết ${input.contentId}!`);
                 } catch (cause) {
@@ -1712,8 +1753,9 @@ export function WorkspaceApp({
                     `/contents/import-text`,
                     jsonInit("POST", { rawText }),
                   );
+                  invalidateTabs("calendar", "fb-poster");
                   if (activeTabRef.current === "calendar") {
-                    await loadTab("calendar");
+                    await loadTab("calendar", { force: true });
                   }
                   setNotice(
                     `Đã nhập ${res.importedCount ?? 1} bài viết từ Google Docs vào Thư viện!`,
@@ -1733,8 +1775,9 @@ export function WorkspaceApp({
                     `/contents/${encodeURIComponent(postId)}/match-media`,
                     jsonInit("POST", {}),
                   );
+                  invalidateTabs("calendar", "fb-poster");
                   if (activeTabRef.current === "calendar") {
-                    await loadTab("calendar");
+                    await loadTab("calendar", { force: true });
                   }
                   setNotice(
                     `Đã ghép tự động ${res.matched?.length ?? 0} hình ảnh từ Google Drive!`,
@@ -1774,8 +1817,9 @@ export function WorkspaceApp({
                     `/publishing/jobs/${encodeURIComponent(jobId)}/confirm-assisted`,
                     jsonInit("POST", {}),
                   );
+                  invalidateTabs("calendar", "fb-poster", "home");
                   if (activeTabRef.current === "calendar") {
-                    await loadTab("calendar");
+                    await loadTab("calendar", { force: true });
                   }
                   setNotice(`Đã xác nhận xuất bản thành công bài viết (${jobId})!`);
                 } catch (cause) {
@@ -1852,8 +1896,9 @@ export function WorkspaceApp({
                       delaySeconds: delaySeconds ?? 60,
                     }),
                   );
+                  invalidateTabs("fb-poster", "calendar", "campaigns", "home");
                   if (activeTabRef.current === "fb-poster") {
-                    await loadTab("fb-poster");
+                    await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
                     `Đã tạo và điều phối lịch đăng cho ${groupIds.length} nhóm thành công!`,
@@ -1895,8 +1940,9 @@ export function WorkspaceApp({
                       ...(targetPost?.mediaPaths ? { mediaPaths: targetPost.mediaPaths } : {}),
                     }),
                   );
+                  invalidateTabs("fb-poster", "calendar", "campaigns", "home");
                   if (activeTabRef.current === "fb-poster") {
-                    await loadTab("fb-poster");
+                    await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
                     `Đã tạo lệnh phát sóng bài viết lên ${targetType === "FANPAGE" ? "Fanpage" : "Trang cá nhân"} thành công!`,
@@ -1916,8 +1962,9 @@ export function WorkspaceApp({
                     `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
                     jsonInit("POST", {}),
                   );
+                  invalidateTabs("fb-poster", "calendar", "campaigns", "home");
                   if (activeTabRef.current === "fb-poster") {
-                    await loadTab("fb-poster");
+                    await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
                     `Đã đăng bài thành công (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
@@ -1943,6 +1990,7 @@ export function WorkspaceApp({
                       mediaPaths: mediaPaths ?? [],
                     }),
                   );
+                  invalidateTabs("fb-poster", "calendar");
                   if (activeTabRef.current === "fb-poster") {
                     await loadTab("fb-poster", { force: true });
                   }
@@ -1959,6 +2007,7 @@ export function WorkspaceApp({
             setError("");
             try {
               await api(`/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+              invalidateTabs("fb-poster", "campaigns");
               if (activeTabRef.current === "fb-poster") {
                 await loadTab("fb-poster", { force: true });
               }
@@ -1974,8 +2023,9 @@ export function WorkspaceApp({
                 `/groups/bulk-import`,
                 jsonInit("POST", { urls, platform: "FACEBOOK" }),
               );
+              invalidateTabs("fb-poster", "campaigns");
               if (activeTabRef.current === "fb-poster") {
-                await loadTab("fb-poster");
+                await loadTab("fb-poster", { force: true });
               }
               setNotice(
                 `Đã import thành công ${res.added} nhóm mới (${res.existing} nhóm đã tồn tại).`,
@@ -1992,8 +2042,9 @@ export function WorkspaceApp({
             setError("");
             try {
               const res = await api<any>(`/fb-poster/sync-accounts`, jsonInit("POST", {}));
+              invalidateTabs("fb-poster", "accounts");
               if (activeTabRef.current === "fb-poster") {
-                await loadTab("fb-poster");
+                await loadTab("fb-poster", { force: true });
               }
               const count = res?.accounts?.length ?? 0;
               setNotice(`Đã quét và đồng bộ ${count} tài khoản Facebook thành công!`);
@@ -2014,8 +2065,9 @@ export function WorkspaceApp({
             setError("");
             try {
               await api(`/social-accounts/declare-and-launch`, jsonInit("POST", { accountName, platform: "FACEBOOK" }));
+              invalidateTabs("fb-poster", "accounts");
               if (activeTabRef.current === "fb-poster") {
-                await loadTab("fb-poster");
+                await loadTab("fb-poster", { force: true });
               }
               setNotice(`Đã tạo hồ sơ cho [${accountName}] và mở Google Chrome đăng nhập.`);
             } catch (cause) {
@@ -2034,8 +2086,9 @@ export function WorkspaceApp({
                     `/campaigns/${encodeURIComponent(campaignId)}/approve`,
                     jsonInit("POST", {}),
                   );
+                  invalidateTabs("campaigns", "fb-poster");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã phê duyệt chiến dịch ${campaignId}.`);
                 } catch (cause) {
@@ -2056,8 +2109,9 @@ export function WorkspaceApp({
                       groupIds: options?.groupIds,
                     }),
                   );
+                  invalidateTabs("campaigns", "fb-poster", "calendar", "home");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(
                     `Đã điều phối chiến dịch ${campaignId}: ${res.jobs?.length ?? 0} nhóm hợp lệ, ${res.skippedGroups?.length ?? 0} nhóm bỏ qua.`,
@@ -2077,8 +2131,9 @@ export function WorkspaceApp({
                     `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
                     jsonInit("POST", {}),
                   );
+                  invalidateTabs("campaigns", "fb-poster", "calendar", "home");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(
                     `Đã thực thi đăng bài (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
@@ -2098,8 +2153,9 @@ export function WorkspaceApp({
                     `/groups/bulk-import`,
                     jsonInit("POST", { urls, platform: "FACEBOOK" }),
                   );
+                  invalidateTabs("campaigns", "fb-poster");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(
                     `Đã nhập hàng loạt nhóm Facebook: ${res.added} nhóm mới, ${res.existing} nhóm đã tồn tại.`,
@@ -2116,8 +2172,9 @@ export function WorkspaceApp({
                 setError("");
                 try {
                   await api(`/groups`, jsonInit("POST", input));
+                  invalidateTabs("campaigns", "fb-poster");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã thêm hội nhóm ${input.name} (${input.groupId})!`);
                 } catch (cause) {
@@ -2140,8 +2197,9 @@ export function WorkspaceApp({
                       productCodes: input.productCodes,
                     }),
                   );
+                  invalidateTabs("campaigns");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã ghi nhận giới thiệu SME ${input.companyName} (${input.taxCode})!`);
                 } catch (cause) {
@@ -2152,6 +2210,29 @@ export function WorkspaceApp({
                   );
                 }
               }}
+              onRecordConversion={async (input) => {
+                setError("");
+                try {
+                  await api(
+                    `/partners/conversions`,
+                    jsonInit("POST", {
+                      ...input,
+                      commissionPolicyConfirmedByAmId: principal?.userId ?? "user-am",
+                    }),
+                  );
+                  invalidateTabs("campaigns", "home");
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns", { force: true });
+                  }
+                  setNotice(`Đã chốt hợp đồng thành công cho referral ${input.referralId}! Hoa hồng đã được chuyển sang danh sách chờ chi trả.`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RECORD_CONVERSION_FAILED",
+                  );
+                }
+              }}
               onMarkConversionPaid={async (conversionId, payoutReference) => {
                 setError("");
                 try {
@@ -2159,8 +2240,9 @@ export function WorkspaceApp({
                     `/partners/conversions/${encodeURIComponent(conversionId)}/payout`,
                     jsonInit("POST", { payoutReference }),
                   );
+                  invalidateTabs("campaigns");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã xác nhận chi trả hoa hồng (${payoutReference})!`);
                 } catch (cause) {
@@ -2175,8 +2257,9 @@ export function WorkspaceApp({
                 setError("");
                 try {
                   await api(`/campaigns`, jsonInit("POST", input));
+                  invalidateTabs("campaigns", "fb-poster");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã tạo mới chiến dịch ${input.campaignId}!`);
                 } catch (cause) {
@@ -2191,8 +2274,9 @@ export function WorkspaceApp({
                 setError("");
                 try {
                   await api(`/partners`, jsonInit("POST", input));
+                  invalidateTabs("campaigns");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã đăng ký CTV ${input.fullName} (${input.partnerId})!`);
                 } catch (cause) {
@@ -2210,8 +2294,9 @@ export function WorkspaceApp({
                     `/partners/${encodeURIComponent(partnerId)}/stage`,
                     jsonInit("POST", { newStage }),
                   );
+                  invalidateTabs("campaigns");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã chuyển giai đoạn CTV ${partnerId} sang ${newStage}.`);
                 } catch (cause) {
@@ -2227,8 +2312,9 @@ export function WorkspaceApp({
                 try {
                   const res = await api<any>(`/outreach/batches`, jsonInit("POST", input));
                   setActiveOutreachBatch(res);
+                  invalidateTabs("campaigns", "leads");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã khởi tạo đợt tiếp cận Zalo "${input.batchName}" (${input.leadIds.length} khách hàng)!`);
                 } catch (cause) {
@@ -2244,8 +2330,9 @@ export function WorkspaceApp({
                 try {
                   const res = await api<any>(`/outreach/batches/${encodeURIComponent(batchId)}/run-next`, jsonInit("POST", {}));
                   setActiveOutreachBatch(res.batch);
+                  invalidateTabs("campaigns", "leads");
                   if (activeTabRef.current === "campaigns") {
-                    await loadTab("campaigns");
+                    await loadTab("campaigns", { force: true });
                   }
                   setNotice(`Đã xử lý: Khách hàng ${res.leadId} -> Trạng thái: ${res.result?.status ?? "Xong"}`);
                 } catch (cause) {
@@ -2297,12 +2384,57 @@ function LeadList({
   selectedLead: string | null;
 }) {
   const result = data as { items?: Lead[]; total?: number } | null;
+  const [searchTerm, setSearchTerm] = useState("");
+  const [tierFilter, setTierFilter] = useState("ALL");
+
   if (!result) return <p className="empty">Đang tải hoặc chưa có lead.</p>;
   if (!result.items?.length)
     return <p className="empty">Chưa có lead trong phạm vi được cấp.</p>;
+
+  const filteredItems = result.items.filter((lead) => {
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      const matchesName = lead.companyName?.toLowerCase().includes(term);
+      const matchesDistrict = lead.district?.toLowerCase().includes(term);
+      const matchesIndustry = lead.industry?.toLowerCase().includes(term);
+      if (!matchesName && !matchesDistrict && !matchesIndustry) return false;
+    }
+    if (tierFilter !== "ALL") {
+      if (!lead.leadScore || lead.leadScore.tier !== tierFilter) return false;
+    }
+    return true;
+  });
+
   return (
     <>
-      <p className="muted">{result.total ?? result.items.length} lead</p>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="🔍 Tìm theo tên doanh nghiệp, quận huyện..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{ flex: "1 1 200px", padding: "6px 10px", fontSize: "13px", borderRadius: "6px" }}
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "13px", margin: 0 }}>
+          <span>Lọc theo Tier:</span>
+          <select
+            aria-label="Lọc theo Tier"
+            value={tierFilter}
+            onChange={(e) => setTierFilter(e.target.value)}
+            style={{ padding: "6px 10px", fontSize: "13px", borderRadius: "6px" }}
+          >
+            <option value="ALL">Tất cả Tier</option>
+            <option value="A">Tier A (Tiềm năng cao)</option>
+            <option value="B">Tier B (Tiềm năng)</option>
+            <option value="C">Tier C (Trung bình)</option>
+            <option value="D">Tier D</option>
+          </select>
+        </label>
+      </div>
+      <p className="muted" style={{ display: "flex", justifyContent: "space-between" }}>
+        <span>Hiển thị {filteredItems.length} / {result.total ?? result.items.length} lead</span>
+        {searchTerm && <span style={{ color: "#0284c7" }}>Đang lọc: "{searchTerm}"</span>}
+      </p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -2315,7 +2447,7 @@ function LeadList({
             </tr>
           </thead>
           <tbody>
-            {result.items.map((lead) => (
+            {filteredItems.map((lead) => (
               <tr
                 key={lead.id}
                 className={selectedLead === lead.id ? "selected-row" : ""}
@@ -2719,6 +2851,7 @@ function ImportPanel({
   onValidate,
   onApprove,
   onCommit,
+  onSwitchToLeads,
 }: {
   file: File | null;
   setFile: (file: File | null) => void;
@@ -2735,6 +2868,7 @@ function ImportPanel({
   onValidate: (event: FormEvent<HTMLFormElement>) => void;
   onApprove: () => void;
   onCommit: () => void;
+  onSwitchToLeads?: () => void;
 }) {
   const ignoredCount = state?.headerInspection?.quarantinedColumns.length ?? 0;
   return (
@@ -3035,9 +3169,50 @@ function ImportPanel({
             </div>
           )}
           {state.status === "COMMITTED" && (
-            <Alert kind="success">
-              Commit đã hoàn tất. {JSON.stringify(state.commitResult)}
-            </Alert>
+            <div
+              style={{
+                marginTop: "16px",
+                padding: "16px 20px",
+                borderRadius: "8px",
+                border: "1px solid #86efac",
+                backgroundColor: "#f0fdf4",
+                color: "#166534",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+                <div>
+                  <h3 style={{ margin: "0 0 4px 0", fontSize: "16px", fontWeight: 700, color: "#15803d" }}>
+                    🎉 Nhập dữ liệu Excel thành công!
+                  </h3>
+                  <p style={{ margin: 0, fontSize: "14px" }}>
+                    Đã chuẩn bị &amp; nạp {state.summary?.rowsToKeep ?? (state.commitResult as any)?.count ?? "các"} lead mới vào cơ sở dữ liệu hệ thống.
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      onSwitchToLeads?.();
+                    }}
+                  >
+                    👉 Xem danh sách Lead ngay
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      setState(null);
+                      setFile(null);
+                      setMapping({});
+                      setDecisions({});
+                    }}
+                  >
+                    Tải file khác
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -3066,65 +3241,120 @@ function TodayDashboard({
   onComplete,
   onDefer,
   onOpenPlanner,
+  onSwitchTab,
 }: {
   data: unknown;
   onComplete: (id: string) => void;
   onDefer: (id: string) => void;
   onOpenPlanner: () => void;
+  onSwitchTab?: (tab: Tab) => void;
 }) {
   const tasks = data as readonly TaskCard[] | null;
-  if (!tasks) {
-    return (
-      <section className="panel-grid" aria-busy="true">
-        <div className="panel" style={{ minHeight: 200 }}>
-          <div className="panel-heading">
-            <h2>Đến hạn hôm nay</h2>
-            <span className="muted">Đang tải…</span>
-          </div>
-          <p className="empty">Đang tải tác vụ trong phạm vi được cấp.</p>
-        </div>
-        <div className="panel" style={{ minHeight: 200 }}>
-          <div className="panel-heading">
-            <h2>Quá hạn</h2>
-            <span className="muted">Đang tải…</span>
-          </div>
-          <p className="empty">Đang kiểm tra…</p>
-        </div>
-      </section>
-    );
-  }
   const today = hcmToday();
-  const dueToday = tasks.filter((task) => hcmDate(task.dueAt) === today);
-  const overdue = tasks.filter((task) => {
-    const date = hcmDate(task.dueAt);
-    return date !== "" && date < today;
-  });
+  const dueToday = tasks ? tasks.filter((task) => hcmDate(task.dueAt) === today) : [];
+  const overdue = tasks
+    ? tasks.filter((task) => {
+        const date = hcmDate(task.dueAt);
+        return date !== "" && date < today;
+      })
+    : [];
+
   return (
     <section className="panel-grid">
-      <div className="panel">
+      <div className="panel" style={{ gridColumn: "1 / -1", padding: "16px 20px" }}>
+        <div className="panel-heading" style={{ marginBottom: "12px" }}>
+          <h2 style={{ fontSize: "16px", margin: 0 }}>📊 Tổng quan hoạt động hôm nay</h2>
+          <span className="muted">Hệ thống Tự động hóa SME Viettel</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Tác vụ cần làm</span>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "#0f172a", marginTop: "4px" }}>
+              {dueToday.length} việc hôm nay
+            </div>
+            <span style={{ fontSize: "12px", color: overdue.length > 0 ? "#dc2626" : "#059669" }}>
+              {overdue.length > 0 ? `⚠️ ${overdue.length} việc quá hạn` : "✓ Không có việc quá hạn"}
+            </span>
+          </div>
+          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Phễu SME &amp; Lead</span>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "#0284c7", marginTop: "4px" }}>
+              Tiếp cận &amp; Chăm sóc
+            </div>
+            <button
+              type="button"
+              className="text-button"
+              style={{ fontSize: "12px", color: "#0284c7", padding: 0 }}
+              onClick={() => onSwitchTab?.("leads")}
+            >
+              👉 Đến danh sách Lead
+            </button>
+          </div>
+          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Tự động hoá MXH</span>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "#059669", marginTop: "4px" }}>
+              Facebook &amp; Zalo
+            </div>
+            <button
+              type="button"
+              className="text-button"
+              style={{ fontSize: "12px", color: "#059669", padding: 0 }}
+              onClick={() => onSwitchTab?.("fb-poster")}
+            >
+              👉 Mở Auto Poster
+            </button>
+          </div>
+          <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Cơ chế An toàn</span>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: "#16a34a", marginTop: "4px" }}>
+              🛡️ Sẵn sàng
+            </div>
+            <button
+              type="button"
+              className="text-button"
+              style={{ fontSize: "12px", color: "#64748b", padding: 0 }}
+              onClick={() => onSwitchTab?.("accounts")}
+            >
+              Kiểm tra Kill Switch &amp; Phiên
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel" style={{ minHeight: tasks ? undefined : 200 }}>
         <div className="panel-heading">
           <h2>Đến hạn hôm nay · {today}</h2>
-          <span className="muted">{dueToday.length} task</span>
+          <span className="muted">{tasks ? `${dueToday.length} task` : "Đang tải…"}</span>
         </div>
-        <TaskList
-          data={dueToday}
-          onComplete={onComplete}
-          onDefer={onDefer}
-          emptyMessage="Không có task đến hạn hôm nay."
-        />
+        {tasks ? (
+          <TaskList
+            data={dueToday}
+            onComplete={onComplete}
+            onDefer={onDefer}
+            emptyMessage="Không có task đến hạn hôm nay."
+          />
+        ) : (
+          <p className="empty">Đang tải tác vụ trong phạm vi được cấp.</p>
+        )}
       </div>
-      <div className="panel">
+
+      <div className="panel" style={{ minHeight: tasks ? undefined : 200 }}>
         <div className="panel-heading">
           <h2>Quá hạn</h2>
-          <span className="muted">{overdue.length} task</span>
+          <span className="muted">{tasks ? `${overdue.length} task` : "Đang tải…"}</span>
         </div>
-        <TaskList
-          data={overdue}
-          onComplete={onComplete}
-          onDefer={onDefer}
-          emptyMessage="Không có task quá hạn."
-        />
+        {tasks ? (
+          <TaskList
+            data={overdue}
+            onComplete={onComplete}
+            onDefer={onDefer}
+            emptyMessage="Không có task quá hạn."
+          />
+        ) : (
+          <p className="empty">Đang kiểm tra…</p>
+        )}
       </div>
+
       <div className="panel">
         <h2>Lập kế hoạch trong thời gian rảnh</h2>
         <p className="muted">

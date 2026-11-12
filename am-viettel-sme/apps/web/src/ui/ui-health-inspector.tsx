@@ -86,8 +86,8 @@ export async function runDefaultClientSmokeCheck(): Promise<DiagnosticReport> {
     { name: "Auth / Session", url: "/api/v1/auth/me" },
     { name: "Leads Store", url: "/api/v1/leads" },
     { name: "Campaigns & Groups", url: "/api/v1/campaigns-overview" },
-    { name: "Master Posts", url: "/api/v1/content/posts" },
-    { name: "Social Accounts", url: "/api/v1/fb-poster/accounts" },
+    { name: "Master Posts", url: "/api/v1/contents" },
+    { name: "Social Accounts", url: "/api/v1/social-accounts" },
   ];
 
   let healthyApis = 0;
