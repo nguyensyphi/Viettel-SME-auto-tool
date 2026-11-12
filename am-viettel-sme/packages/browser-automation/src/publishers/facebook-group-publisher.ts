@@ -403,6 +403,7 @@ export async function publishToFacebookGroup(
 
 export interface RunFacebookGroupPublishSessionOptions {
   readonly accountId: string;
+  readonly profileDir?: string | undefined;
   readonly groupUrl: string;
   readonly content: string;
   readonly mediaPaths?: readonly string[] | undefined;
@@ -428,6 +429,14 @@ export async function runFacebookGroupPublishSession(
 
   try {
     // 1. Try connecting to already open Chrome with remote debugging port 9222
+    const targetProfileDir = options.profileDir
+      ? path.resolve(options.profileDir)
+      : path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
+
+    if (!fs.existsSync(targetProfileDir)) {
+      fs.mkdirSync(targetProfileDir, { recursive: true });
+    }
+
     try {
       const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
       browserOrContext = cdpBrowser;
@@ -437,15 +446,27 @@ export async function runFacebookGroupPublishSession(
       isCdp = true;
     } catch {
       // 2. If Chrome not open with CDP, launch isolated persistent context
-      const profileDir = path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
-      const context = await pw.chromium.launchPersistentContext(profileDir, {
-        headless: false,
-        channel: "chrome",
-        viewport: { width: 1280, height: 800 },
-        args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
-      });
-      browserOrContext = context;
-      page = context.pages()[0] || (await context.newPage());
+      try {
+        const context = await pw.chromium.launchPersistentContext(targetProfileDir, {
+          headless: false,
+          channel: "chrome",
+          viewport: { width: 1280, height: 800 },
+          args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+        });
+        browserOrContext = context;
+        page = context.pages()[0] || (await context.newPage());
+      } catch (launchErr: any) {
+        if (
+          launchErr?.message?.includes("Opening in existing browser session") ||
+          launchErr?.message?.includes("ProcessSingleton") ||
+          launchErr?.message?.includes("lock file")
+        ) {
+          throw new Error(
+            `[XUNG_ĐỘT_TRÌNH_DUYỆT] Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc đang có tiến trình chạy ngầm. Vui lòng đóng tất cả các cửa sổ Chrome của nick này rồi bấm [🔄 Thử lại]!`,
+          );
+        }
+        throw launchErr;
+      }
     }
 
     // 3. Execute real group post via Playwright
@@ -512,6 +533,7 @@ export async function runFacebookGroupPublishSession(
 
 export interface VerifyFacebookSessionOptions {
   readonly accountId: string;
+  readonly profileDir?: string | undefined;
   readonly storageRootDir?: string | undefined;
 }
 
@@ -529,6 +551,14 @@ export async function verifyFacebookSession(
   let page: any = null;
   let isCdp = false;
 
+  const targetProfileDir = options.profileDir
+    ? path.resolve(options.profileDir)
+    : path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
+
+  if (!fs.existsSync(targetProfileDir)) {
+    fs.mkdirSync(targetProfileDir, { recursive: true });
+  }
+
   try {
     try {
       const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
@@ -538,15 +568,29 @@ export async function verifyFacebookSession(
       page = await defaultCtx.newPage();
       isCdp = true;
     } catch {
-      const profileDir = path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
-      const context = await pw.chromium.launchPersistentContext(profileDir, {
-        headless: true,
-        channel: "chrome",
-        viewport: { width: 1280, height: 800 },
-        args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
-      });
-      browserOrContext = context;
-      page = context.pages()[0] || (await context.newPage());
+      try {
+        const context = await pw.chromium.launchPersistentContext(targetProfileDir, {
+          headless: true,
+          channel: "chrome",
+          viewport: { width: 1280, height: 800 },
+          args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+        });
+        browserOrContext = context;
+        page = context.pages()[0] || (await context.newPage());
+      } catch (launchErr: any) {
+        if (
+          launchErr?.message?.includes("Opening in existing browser session") ||
+          launchErr?.message?.includes("ProcessSingleton") ||
+          launchErr?.message?.includes("lock file")
+        ) {
+          return {
+            status: "NEEDS_LOGIN",
+            reason: `Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc có tiến trình chạy ngầm. Hãy đóng Chrome để hệ thống xác minh.`,
+            checkedAt: new Date().toISOString(),
+          };
+        }
+        throw launchErr;
+      }
     }
 
     await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 20000 });

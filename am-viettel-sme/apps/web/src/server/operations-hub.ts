@@ -120,6 +120,7 @@ const SAFE_ACCOUNT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/u;
 
 export class WorkspaceOperationsHub {
   private readonly workspaces = new Map<string, WorkspaceOperationsState>();
+  private readonly accountExecutionLocks = new Map<string, Promise<any>>();
 
   private stateFor(workspaceId: string): WorkspaceOperationsState {
     let existing = this.workspaces.get(workspaceId);
@@ -479,6 +480,7 @@ export class WorkspaceOperationsHub {
 
       const check = await verifyFacebookSession({
         accountId,
+        profileDir: account.profileDir,
         storageRootDir: path.resolve(process.cwd(), "storage"),
       });
 
@@ -858,9 +860,23 @@ export class WorkspaceOperationsHub {
       return { ...job };
     }
 
+    const lockKey = `${job.platform}:${job.accountId}`;
+    const previousRun = this.accountExecutionLocks.get(lockKey) ?? Promise.resolve();
+    let releaseLock: () => void = () => {};
+    const currentRun = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.accountExecutionLocks.set(lockKey, currentRun);
+
+    await previousRun.catch(() => {});
+
+    const accountRecord = state.accounts.get(`FACEBOOK:${job.accountId}`);
+    const customProfileDir = accountRecord?.profileDir;
+
     try {
       const result = await runFacebookGroupPublishSession({
         accountId: job.accountId,
+        profileDir: customProfileDir,
         groupUrl: job.groupUrl,
         content: job.content,
         mediaPaths: job.mediaPaths,
@@ -910,6 +926,8 @@ export class WorkspaceOperationsHub {
       }
 
       return { ...job };
+    } finally {
+      releaseLock();
     }
   }
 
