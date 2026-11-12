@@ -1923,6 +1923,25 @@ export function FacebookAutoPosterView({
                           <span style={{ fontSize: 11, color: "#b45309", backgroundColor: "#fef3c7", padding: "2px 6px", borderRadius: 4 }}>
                             ⏳ Chờ bấm "Chạy đăng bài"
                           </span>
+                        ) : l.status === "FAILED" ? (
+                          <span
+                            title={l.error || "Đăng bài thất bại"}
+                            style={{
+                              fontSize: 11,
+                              color: "#dc2626",
+                              backgroundColor: "#fee2e2",
+                              border: "1px solid #fecaca",
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              maxWidth: 240,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              display: "inline-block",
+                            }}
+                          >
+                            ⚠️ {l.error ? (l.error.length > 35 ? `${l.error.slice(0, 35)}...` : l.error) : "Lỗi đăng bài"}
+                          </span>
                         ) : (
                           <span style={{ fontSize: 12, color: "#94a3b8" }}>—</span>
                         )}

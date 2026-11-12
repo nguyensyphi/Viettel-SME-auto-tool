@@ -47,6 +47,7 @@ export function buildDesktopLoginArgs(
 
   const args = [
     `--user-data-dir=${absoluteProfileDir}`,
+    "--remote-debugging-port=9222",
     "--disable-gpu",
     "--no-first-run",
     "--no-default-browser-check",

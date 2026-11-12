@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 export interface FacebookGroupPublishInput {
   readonly page: any;
@@ -102,6 +103,26 @@ export async function publishToFacebookGroup(
   ) {
     throw new Error(
       "CHECKPOINT_DETECTED: Account checkpoint or suspension detected on Facebook",
+    );
+  }
+
+  if (
+    currentUrl.toLowerCase().includes("login") ||
+    currentUrl.toLowerCase().includes("/login/")
+  ) {
+    throw new Error(
+      "NEEDS_LOGIN: Tài khoản Facebook chưa đăng nhập. Vui lòng bấm 'Mở Chrome đăng nhập' trên bảng Tài khoản để đăng nhập trước khi chạy đăng bài!",
+    );
+  }
+
+  const pageContent = typeof page.content === "function" ? await page.content().catch(() => "") : "";
+  if (
+    pageContent.includes("Bạn hiện không xem được nội dung này") ||
+    pageContent.includes("This content isn't available right now") ||
+    pageContent.includes("Trang này không hiển thị")
+  ) {
+    throw new Error(
+      "GROUP_NOT_ACCESSIBLE: Không thể truy cập nhóm này. Nhóm có thể là nhóm kín mà tài khoản chưa tham gia, hoặc URL nhóm không chính xác.",
     );
   }
 
@@ -265,4 +286,96 @@ export async function publishToFacebookGroup(
     status: "PUBLISHED",
     details: "Đã chuẩn bị nội dung soạn thảo bài viết trên nhóm",
   };
+}
+
+export interface RunFacebookGroupPublishSessionOptions {
+  readonly accountId: string;
+  readonly groupUrl: string;
+  readonly content: string;
+  readonly mediaPaths?: readonly string[] | undefined;
+  readonly submit?: boolean | undefined;
+  readonly storageRootDir?: string | undefined;
+  readonly jobId?: string | undefined;
+}
+
+export interface RunFacebookGroupPublishSessionResult {
+  readonly status: "PUBLISHED" | "PENDING_APPROVAL";
+  readonly postUrl?: string | undefined;
+  readonly details?: string | undefined;
+  readonly proofPath?: string | undefined;
+}
+
+export async function runFacebookGroupPublishSession(
+  options: RunFacebookGroupPublishSessionOptions,
+): Promise<RunFacebookGroupPublishSessionResult> {
+  const pw = await import("playwright-core");
+  let browserOrContext: any = null;
+  let page: any = null;
+  let isCdp = false;
+
+  try {
+    // 1. Try connecting to already open Chrome with remote debugging port 9222
+    try {
+      const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
+      browserOrContext = cdpBrowser;
+      const contexts = cdpBrowser.contexts();
+      const defaultCtx = contexts[0] || (await cdpBrowser.newContext());
+      page = await defaultCtx.newPage();
+      isCdp = true;
+    } catch {
+      // 2. If Chrome not open with CDP, launch isolated persistent context
+      const profileDir = path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
+      const context = await pw.chromium.launchPersistentContext(profileDir, {
+        headless: false,
+        channel: "chrome",
+        viewport: { width: 1280, height: 800 },
+        args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+      });
+      browserOrContext = context;
+      page = context.pages()[0] || (await context.newPage());
+    }
+
+    // 3. Execute real group post via Playwright
+    const publishResult = await publishToFacebookGroup({
+      page,
+      groupUrl: options.groupUrl,
+      content: options.content,
+      mediaPaths: options.mediaPaths,
+      submit: options.submit ?? true,
+    });
+
+    // Capture screenshot proof
+    let proofPath: string | undefined;
+    try {
+      const reportsDir = path.resolve(options.storageRootDir ?? "storage", "reports/ui-audit");
+      if (!fs.existsSync(reportsDir)) {
+        fs.mkdirSync(reportsDir, { recursive: true });
+      }
+      proofPath = path.join(reportsDir, `proof-${options.jobId ?? Date.now()}.png`);
+      await page.screenshot({ path: proofPath, fullPage: false });
+    } catch {
+      // screenshot optional
+    }
+
+    return {
+      status: publishResult.status,
+      postUrl: publishResult.postUrl,
+      details: publishResult.details,
+      proofPath,
+    };
+  } finally {
+    if (page && isCdp) {
+      try {
+        await page.close();
+      } catch {
+        // ignore
+      }
+    } else if (browserOrContext && !isCdp) {
+      try {
+        await browserOrContext.close();
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
