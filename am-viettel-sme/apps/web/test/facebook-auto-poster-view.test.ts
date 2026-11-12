@@ -457,5 +457,29 @@ describe("FacebookAutoPosterView — Dedicated FB Auto Poster Dashboard", () => 
       mediaPaths: ["https://example.com/cks-banner.png"],
     });
   });
+
+  it("renders 'Chạy toàn bộ hàng đợi' batch button and executes all queued jobs", async () => {
+    const onRunJob = vi.fn(async () => {});
+
+    render(
+      createElement(FacebookAutoPosterView, {
+        accounts: sampleAccounts,
+        posts: samplePosts,
+        groups: sampleGroups,
+        logs: sampleLogs,
+        onRunJob,
+      }),
+    );
+
+    // Shows guidance for queued item
+    expect(screen.getByText(/Chờ bấm "Chạy đăng bài"/i)).toBeTruthy();
+
+    // Click "🚀 Chạy toàn bộ hàng đợi"
+    const batchBtn = screen.getByRole("button", { name: /Chạy toàn bộ hàng đợi/i });
+    expect(batchBtn).toBeTruthy();
+    fireEvent.click(batchBtn);
+
+    expect(onRunJob).toHaveBeenCalledWith("job-002");
+  });
 });
 

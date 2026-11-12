@@ -162,6 +162,8 @@ export function FacebookAutoPosterView({
   const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [viewProofImage, setViewProofImage] = useState<string | null>(null);
   const [viewZoomImage, setViewZoomImage] = useState<string | null>(null);
+  const [runningJobId, setRunningJobId] = useState<string | null>(null);
+  const [isExecutingBatch, setIsExecutingBatch] = useState<boolean>(false);
 
   // Fanpage / Profile Dispatch states
   const [pageDispatchPostId, setPageDispatchPostId] = useState<string | null>(null);
@@ -1410,6 +1412,10 @@ export function FacebookAutoPosterView({
               </div>
             </div>
 
+            <div style={{ backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#1e40af", lineHeight: 1.4 }}>
+              💡 <strong>Lưu ý vận hành an toàn:</strong> Sau khi xác nhận, hệ thống xếp bài vào <strong>Hàng đợi (QUEUED)</strong> để kiểm soát tần suất chống checkpoint. Hãy bấm <strong>[▶️ Chạy đăng bài]</strong> hoặc <strong>[🚀 Chạy toàn bộ hàng đợi]</strong> ở Bảng Nhật ký bên dưới để Playwright mở trình duyệt, đăng bài và hiển thị Link minh chứng thật.
+            </div>
+
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
               <button
                 type="button"
@@ -1796,10 +1802,40 @@ export function FacebookAutoPosterView({
 
       {/* 8. Báo cáo & Nhật ký Đăng bài (Posting Log with Proof Viewer & Retry) */}
       <section className="panel">
-        <div className="panel-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div className="panel-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
           <div>
             <h2>Báo Cáo &amp; Nhật Ký Đăng Bài (Posting Log)</h2>
             <span className="muted">Theo dõi tiến trình Playwright, minh chứng bài đăng và link thực tế</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {publishedCount > 0 && (
+              <span style={{ fontSize: 12, color: "#059669", fontWeight: 600, backgroundColor: "#ecfdf5", border: "1px solid #a7f3d0", padding: "4px 8px", borderRadius: 4 }}>
+                ✅ Đã đăng: {publishedCount}
+              </span>
+            )}
+            {queuedCount > 0 && (
+              <button
+                type="button"
+                className="primary"
+                style={{ fontSize: 12, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}
+                disabled={isExecutingBatch || Boolean(runningJobId)}
+                onClick={async () => {
+                  setIsExecutingBatch(true);
+                  try {
+                    const queuedJobs = facebookLogs.filter((l) => l.status === "QUEUED");
+                    for (const j of queuedJobs) {
+                      setRunningJobId(j.jobId);
+                      await onRunJob?.(j.jobId);
+                    }
+                  } finally {
+                    setRunningJobId(null);
+                    setIsExecutingBatch(false);
+                  }
+                }}
+              >
+                {isExecutingBatch ? "⏳ Đang chạy toàn bộ..." : `🚀 Chạy toàn bộ hàng đợi (${queuedCount} bài)`}
+              </button>
+            )}
           </div>
         </div>
         <div className="table-wrap">
@@ -1867,10 +1903,26 @@ export function FacebookAutoPosterView({
                             href={l.postUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ fontSize: 12, color: "#2563eb", fontWeight: 600 }}
+                            style={{
+                              fontSize: 12,
+                              color: "#0284c7",
+                              fontWeight: 600,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              backgroundColor: "#f0f9ff",
+                              border: "1px solid #bae6fd",
+                              padding: "2px 8px",
+                              borderRadius: 4,
+                              textDecoration: "none",
+                            }}
                           >
-                            Xem bài viết ↗
+                            🔗 Xem bài viết ↗
                           </a>
+                        ) : l.status === "QUEUED" ? (
+                          <span style={{ fontSize: 11, color: "#b45309", backgroundColor: "#fef3c7", padding: "2px 6px", borderRadius: 4 }}>
+                            ⏳ Chờ bấm "Chạy đăng bài"
+                          </span>
                         ) : (
                           <span style={{ fontSize: 12, color: "#94a3b8" }}>—</span>
                         )}
@@ -1897,22 +1949,38 @@ export function FacebookAutoPosterView({
                         <button
                           type="button"
                           className="primary"
+                          disabled={runningJobId === l.jobId || isExecutingBatch}
                           style={{ fontSize: 11, padding: "4px 8px" }}
-                          onClick={() => onRunJob?.(l.jobId)}
+                          onClick={async () => {
+                            setRunningJobId(l.jobId);
+                            try {
+                              await onRunJob?.(l.jobId);
+                            } finally {
+                              setRunningJobId(null);
+                            }
+                          }}
                         >
-                          Chạy đăng bài
+                          {runningJobId === l.jobId ? "⏳ Đang đăng..." : "Chạy đăng bài"}
                         </button>
                       ) : l.status === "FAILED" ? (
                         <button
                           type="button"
                           className="secondary"
+                          disabled={runningJobId === l.jobId || isExecutingBatch}
                           style={{ fontSize: 11, padding: "4px 8px" }}
-                          onClick={() => onRunJob?.(l.jobId)}
+                          onClick={async () => {
+                            setRunningJobId(l.jobId);
+                            try {
+                              await onRunJob?.(l.jobId);
+                            } finally {
+                              setRunningJobId(null);
+                            }
+                          }}
                         >
-                          🔄 Thử lại
+                          {runningJobId === l.jobId ? "⏳ Đang thử lại..." : "🔄 Thử lại"}
                         </button>
                       ) : (
-                        <span style={{ fontSize: 12, color: "#059669" }}>Hoàn tất</span>
+                        <span style={{ fontSize: 12, color: "#059669", fontWeight: 600 }}>✅ Hoàn tất</span>
                       )}
                     </td>
                   </tr>

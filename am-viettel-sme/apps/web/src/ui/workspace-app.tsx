@@ -1901,7 +1901,7 @@ export function WorkspaceApp({
                     await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
-                    `Đã tạo và điều phối lịch đăng cho ${groupIds.length} nhóm thành công!`,
+                    `Đã xếp hàng ${groupIds.length} bài vào Hàng đợi (QUEUED)! Hãy bấm [Chạy đăng bài] hoặc [🚀 Chạy toàn bộ hàng đợi] ở bảng bên dưới để Playwright đăng lên Facebook và nhận Link minh chứng.`,
                   );
                 } catch (cause) {
                   setError(
@@ -1945,7 +1945,7 @@ export function WorkspaceApp({
                     await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
-                    `Đã tạo lệnh phát sóng bài viết lên ${targetType === "FANPAGE" ? "Fanpage" : "Trang cá nhân"} thành công!`,
+                    `Đã tạo lệnh phát sóng bài viết lên ${targetType === "FANPAGE" ? "Fanpage" : "Trang cá nhân"}! Hãy bấm [Chạy đăng bài] ở bảng bên dưới để hoàn tất và nhận Link minh chứng.`,
                   );
                 } catch (cause) {
                   setError(
@@ -1967,7 +1967,7 @@ export function WorkspaceApp({
                     await loadTab("fb-poster", { force: true });
                   }
                   setNotice(
-                    `Đã đăng bài thành công (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
+                    `🎉 Đã xuất bản thành công (${res.status})! Link minh chứng: ${res.postUrl ?? "Đã cập nhật trong bảng"}`,
                   );
                 } catch (cause) {
                   setError(
