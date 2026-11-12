@@ -98,3 +98,4 @@ flowchart TD
 1. Access `http://127.0.0.1:3000` -> Click **[🔍 Kiểm tra đăng nhập]**.
 2. If account is not logged in, status updates to `NEEDS_LOGIN` with yellow/red badge.
 3. If trying to post with unauthenticated account, error is recorded with `[CHƯA_ĐĂNG_NHẬP]` and displayed in table with retry option.
+
