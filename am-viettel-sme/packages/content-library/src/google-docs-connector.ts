@@ -12,6 +12,8 @@ export interface GoogleDocStructuralElement {
 
 export interface GoogleDocPayload {
   documentId: string;
+  title?: string | undefined;
+  revisionId?: string | undefined;
   body?: {
     content?: GoogleDocStructuralElement[] | undefined;
   } | undefined;
@@ -60,6 +62,41 @@ export class GoogleDocsConnector {
     }
 
     return parseStructuredPosts(chunks.join(""));
+  }
+
+  async fetchDocumentWithText(documentId: string): Promise<{
+    documentId: string;
+    title: string;
+    revisionId: string | null;
+    rawText: string;
+    posts: ParsedPost[];
+  }> {
+    const cleanId = documentId?.trim() ?? "";
+    if (!cleanId) {
+      throw new Error("documentId is required");
+    }
+
+    const doc = await this.transport.fetchDocument(cleanId);
+    const chunks: string[] = [];
+
+    for (const block of doc.body?.content ?? []) {
+      for (const el of block.paragraph?.elements ?? []) {
+        if (el.textRun?.content) {
+          chunks.push(el.textRun.content);
+        }
+      }
+    }
+
+    const rawText = chunks.join("");
+    const posts = parseStructuredPosts(rawText);
+
+    return {
+      documentId: cleanId,
+      title: doc.title ?? `Google Doc ${cleanId}`,
+      revisionId: doc.revisionId ?? null,
+      rawText,
+      posts,
+    };
   }
 }
 

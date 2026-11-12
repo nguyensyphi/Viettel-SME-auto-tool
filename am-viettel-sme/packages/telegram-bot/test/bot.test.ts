@@ -182,5 +182,63 @@ describe("TelegramAdminBot & TelegramAlertDispatcher — Shared Core Operations 
     expect(approvedChatWithSuffix.authorized).toBe(true);
     expect(approvedChatWithSuffix.command).toBe("/dashboard");
   });
+
+  it("PB-P10: dispatches Personal Branding notifications (SESSION_EXPIRED, WAITING_CONFIRMATION, JOB_FAILED, MORNING_DIGEST) and blocks QR/tokens", async () => {
+    const sentMessages: Array<{ chatId: string; text: string }> = [];
+    const transport = {
+      sendMessage: vi.fn(async (chatId: string, text: string) => {
+        sentMessages.push({ chatId, text });
+      }),
+    };
+
+    const alerts = new TelegramAlertDispatcher({
+      adminChatIds: ["chat_am_01"],
+      transport,
+    });
+
+    await alerts.sendPublishingNotification({
+      event: "WAITING_CONFIRMATION",
+      accountCode: "zalo-dian-am01",
+      platform: "ZALO",
+      postCode: "PB001",
+      postTitle: "Vì sao doanh nghiệp mới nên dùng Chữ ký số Viettel-CA?",
+      dashboardUrl: "http://127.0.0.1:3000/publishing/jobs/job-1",
+    });
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]?.text).toContain("WAITING_CONFIRMATION");
+    expect(sentMessages[0]?.text).toContain("PB001");
+    expect(sentMessages[0]?.text).toContain("zalo-dian-am01");
+
+    await alerts.sendMorningScheduleDigest({
+      dateLabel: "2026-11-11",
+      scheduledCount: 3,
+      waitingConfirmationCount: 1,
+      expiredAccountsCount: 0,
+      items: [
+        {
+          timeLabel: "08:30",
+          accountCode: "zalo-dian-am01",
+          platform: "ZALO",
+          postCode: "PB001",
+          topicCode: "CHU_KY_SO",
+        },
+      ],
+    });
+
+    expect(sentMessages).toHaveLength(2);
+    expect(sentMessages[1]?.text).toContain("2026-11-11");
+    expect(sentMessages[1]?.text).toContain("PB001");
+
+    // Must block if someone tries to smuggle a QR image link in postTitle or reason
+    await expect(
+      alerts.sendPublishingNotification({
+        event: "SESSION_EXPIRED",
+        accountCode: "zalo-dian-am01",
+        platform: "ZALO",
+        reason: "Quét mã tại https://internal.local/qrcode-zalo.png",
+      }),
+    ).rejects.toThrow(/FORBIDDEN_TELEGRAM_PAYLOAD/);
+  });
 });
 

@@ -543,4 +543,116 @@ describe("P0.7 API security boundary", () => {
     expect(Array.isArray(campBody.campaigns)).toBe(true);
     expect(Array.isArray(campBody.partners)).toBe(true);
   });
+
+  it("serves standard import template via GET /api/v1/import-template", async () => {
+    const { services } = setup(am);
+    const res = await handleApiRequest(
+      request("/api/v1/import-template", "GET", undefined, loggedHeaders()),
+      ["api", "v1", "import-template"],
+      services,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("spreadsheetml");
+    const arrayBuffer = await res.arrayBuffer();
+    expect(arrayBuffer.byteLength).toBeGreaterThan(0);
+  });
+
+  it("handles social account declaration and connection via API", async () => {
+    const { services } = setup(am);
+    const declRes = await handleApiRequest(
+      request(
+        "/api/v1/social-accounts",
+        "POST",
+        JSON.stringify({ accountId: "zalo-test-am03", platform: "ZALO" }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "social-accounts"],
+      services,
+    );
+    expect(declRes.status).toBe(201);
+    const declBody = (await declRes.json()) as { status: string; accountId: string };
+    expect(declBody.status).toBe("NEEDS_LOGIN");
+
+    const connRes = await handleApiRequest(
+      request(
+        "/api/v1/social-accounts/zalo-test-am03/connect",
+        "POST",
+        JSON.stringify({ platform: "ZALO" }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "social-accounts", "zalo-test-am03", "connect"],
+      services,
+    );
+    expect(connRes.status).toBe(200);
+    const connBody = (await connRes.json()) as { status: string };
+    expect(connBody.status).toBe("CONNECTED");
+  });
+
+  it("handles campaigns creation and approval via API", async () => {
+    const { services } = setup(am);
+    const createRes = await handleApiRequest(
+      request(
+        "/api/v1/campaigns",
+        "POST",
+        JSON.stringify({
+          campaignId: "CAMP-API-01",
+          name: "Chiến dịch tuyển CTV kế toán",
+          campaignType: "PARTNER_RECRUITMENT",
+          targetCategories: ["ACCOUNTING_TAX"],
+          contentTemplate: "Chào anh/chị, Viettel tuyển CTV...",
+        }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "campaigns"],
+      services,
+    );
+    expect(createRes.status).toBe(201);
+
+    const approveRes = await handleApiRequest(
+      request(
+        "/api/v1/campaigns/CAMP-API-01/approve",
+        "POST",
+        JSON.stringify({}),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "campaigns", "CAMP-API-01", "approve"],
+      services,
+    );
+    expect(approveRes.status).toBe(200);
+  });
+
+  it("handles partner registration and stage transition via API", async () => {
+    const { services } = setup(am);
+    const regRes = await handleApiRequest(
+      request(
+        "/api/v1/partners",
+        "POST",
+        JSON.stringify({
+          partnerId: "PARTNER-API-01",
+          fullName: "Lê Thị CTV",
+          phone: "0987654321",
+          profession: "ACCOUNTANT",
+          notes: "CTV chuyên thuế Dĩ An",
+        }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "partners"],
+      services,
+    );
+    expect(regRes.status).toBe(201);
+
+    const stageRes = await handleApiRequest(
+      request(
+        "/api/v1/partners/PARTNER-API-01/stage",
+        "POST",
+        JSON.stringify({ newStage: "CONTACTED" }),
+        { ...loggedHeaders(), "content-type": "application/json" },
+      ),
+      ["api", "v1", "partners", "PARTNER-API-01", "stage"],
+      services,
+    );
+    expect(stageRes.status).toBe(200);
+    const stageBody = (await stageRes.json()) as { stage: string };
+    expect(stageBody.stage).toBe("CONTACTED");
+  });
 });

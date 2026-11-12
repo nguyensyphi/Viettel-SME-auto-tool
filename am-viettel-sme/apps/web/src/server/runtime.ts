@@ -17,12 +17,15 @@ import {
   LeadWorkspaceRepository,
 } from "@am-sme/database/lead-workspace";
 import { TaskRepository } from "@am-sme/database/tasks";
+import { ContentLibraryRepository } from "@am-sme/database/content-library";
 import { createDemoApiServices } from "./demo-services.js";
 import { InMemoryImportApi } from "./import-api.js";
 import { WorkspaceOperationsHub } from "./operations-hub.js";
 import type { ApiServices } from "./http-api.js";
 
-let singleton: ApiServices | null = null;
+const globalForServices = globalThis as unknown as {
+  __apiServicesSingleton?: ApiServices;
+};
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -38,15 +41,18 @@ function positiveIntegerEnv(name: string): number {
 }
 
 export function getApiServices(): ApiServices {
-  if (singleton) return singleton;
+  if (globalForServices.__apiServicesSingleton) {
+    return globalForServices.__apiServicesSingleton;
+  }
   if (
     process.env.DEMO_MODE === "true" ||
     (process.env.APP_ENV === "local" &&
       process.env.DATABASE_URL?.includes("change-me-local-only") &&
       process.env.DEMO_MODE !== "false")
   ) {
-    singleton = createDemoApiServices();
-    return singleton;
+    const services = createDemoApiServices();
+    globalForServices.__apiServicesSingleton = services;
+    return services;
   }
   const environment = loadEnvConfig(process.env);
   const appEnv = environment.appEnv;
@@ -79,7 +85,7 @@ export function getApiServices(): ApiServices {
     createPrismaImportDatabase(prisma),
   );
   const previewService = new ImportPreviewService(commitRepo);
-  singleton = {
+  const services: ApiServices = {
     auth,
     guard: new HttpAuthGuard(auth, { secure: appEnv === "staging" }),
     leads: new LeadWorkspaceRepository(leadDb),
@@ -87,15 +93,17 @@ export function getApiServices(): ApiServices {
     imports: new InMemoryImportApi(previewService),
     db: leadDb,
     operations: new WorkspaceOperationsHub(),
+    contentLibrary: new ContentLibraryRepository(leadDb),
     sessionCookie: {
       secure: appEnv === "staging",
       maxAgeSeconds: Math.floor(sessionTtlMs / 1000),
     },
   };
-  return singleton;
+  globalForServices.__apiServicesSingleton = services;
+  return services;
 }
 
 export function resetRuntimeForTests(): void {
-  singleton?.imports.dispose();
-  singleton = null;
+  globalForServices.__apiServicesSingleton?.imports.dispose();
+  delete globalForServices.__apiServicesSingleton;
 }

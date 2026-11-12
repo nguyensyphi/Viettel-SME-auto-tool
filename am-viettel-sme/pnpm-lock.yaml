@@ -133,6 +133,9 @@ importers:
       '@am-sme/config':
         specifier: workspace:*
         version: link:../config
+      '@am-sme/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@am-sme/excel-import':
         specifier: workspace:*
         version: link:../excel-import

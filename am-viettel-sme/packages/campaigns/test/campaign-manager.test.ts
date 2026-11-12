@@ -200,5 +200,22 @@ describe("GroupManager & CampaignManager — Partner & Group Campaign Automation
       }),
     ).rejects.toThrow(/KILL_SWITCH_ACTIVE/);
   });
+
+  it("deletes a group from the registry when requested", () => {
+    const groupManager = new GroupManager();
+    groupManager.registerGroup({
+      groupId: "grp_to_delete",
+      platform: "FACEBOOK",
+      name: "Nhóm cần xoá",
+      url: "https://www.facebook.com/groups/need_delete",
+      postingPermission: "ALLOWED",
+    });
+
+    expect(groupManager.getGroup("grp_to_delete")).not.toBeNull();
+    const deleted = groupManager.deleteGroup("grp_to_delete");
+    expect(deleted).toBe(true);
+    expect(groupManager.getGroup("grp_to_delete")).toBeNull();
+    expect(groupManager.listGroups().some((g) => g.groupId === "grp_to_delete")).toBe(false);
+  });
 });
 

@@ -176,3 +176,190 @@ it("shows Review after a successful preview validation response", async () => {
     fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/validate")),
   ).toHaveLength(1);
 });
+
+it("preserves tab data and avoids layout shift when switching tabs", async () => {
+  const principal = {
+    userId: "am-1",
+    workspaceId: "workspace-1",
+    role: "AM",
+    teamId: "team-1",
+  };
+  const task = {
+    id: "task-1",
+    type: "REVIEW_LEAD",
+    outcomeGoal: "Rà soát lead synthetic",
+    dueAt: new Date().toISOString(),
+    estimatedMinutes: 30,
+    approvalStatus: "NOT_REQUIRED",
+    leadId: "lead-1",
+  };
+  const leads = {
+    items: [
+      {
+        id: "lead-1",
+        companyName: "Công ty ABC",
+        stage: "PENDING_REVIEW",
+      },
+    ],
+  };
+
+  let openTasksCallCount = 0;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/auth/me")) {
+      return new Response(JSON.stringify({ user: principal }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/tasks?status=OPEN")) {
+      openTasksCallCount++;
+      return new Response(JSON.stringify([task]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/leads")) {
+      return new Response(JSON.stringify(leads), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  render(<WorkspaceApp />);
+
+  // 1. Initial load on "Dashboard hôm nay"
+  expect(await screen.findByRole("heading", { name: "Dashboard hôm nay" })).toBeTruthy();
+  expect(await screen.findByText("Rà soát lead synthetic")).toBeTruthy();
+  expect(openTasksCallCount).toBe(1);
+
+  // 2. Switch to "Lead"
+  fireEvent.click(screen.getByRole("button", { name: "Lead" }));
+  expect(await screen.findByText("Công ty ABC")).toBeTruthy();
+
+  // 3. Switch back to "Dashboard hôm nay"
+  fireEvent.click(screen.getByRole("button", { name: "Dashboard hôm nay" }));
+
+  // Crucial check: Tab switch is instant and preserved; does NOT show empty loading message
+  expect(screen.queryByText("Đang tải tác vụ trong phạm vi được cấp.")).toBeNull();
+  expect(screen.getByText("Rà soát lead synthetic")).toBeTruthy();
+
+  // Crucial check: SWR cache avoids redundant re-fetch within TTL
+  expect(openTasksCallCount).toBe(1);
+});
+
+it("renders 'Kiểm tra UI/UX' button in workspace header and opens the UIHealthInspector modal", async () => {
+  const principal = {
+    userId: "user-am",
+    email: "am@viettel.vn",
+    role: "AM",
+    workspaceId: "ws-dian",
+    permissions: ["*"],
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/auth/me")) {
+      return new Response(JSON.stringify({ user: principal }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  render(<WorkspaceApp />);
+
+  const inspectorBtn = await screen.findByRole("button", { name: /Kiểm tra UI\/UX/i });
+  expect(inspectorBtn).toBeTruthy();
+
+  // Click to open modal
+  fireEvent.click(inspectorBtn);
+  expect(await screen.findByText("Chẩn đoán Sức khỏe UI & UX Hệ thống")).toBeTruthy();
+});
+
+it("renders AI Lead Scoring Tier badge in Lead list and 100-point rubric breakdown in Lead detail", async () => {
+  const principal = {
+    userId: "user-am",
+    email: "am@viettel.vn",
+    role: "AM",
+    workspaceId: "ws-dian",
+    permissions: ["*"],
+  };
+  const mockLead = {
+    id: "lead-test-01",
+    companyName: "Công ty Vận Tải & Logistics Sóng Thần",
+    stage: "NEW",
+    district: "Dĩ An",
+    contacts: [{ id: "c1", contactName: "Bác Hùng", phone: "0912••••78", email: null, contactabilityStatus: "ELIGIBLE" }],
+    leadScore: {
+      totalScore: 85,
+      tier: "A",
+      recommendedProducts: ["vTracking", "CA", "S-Invoice"],
+      tierExplanation: "Ưu tiên cao - Phù hợp chuyển đổi nhanh dịch vụ số Viettel.",
+      industryScore: 20,
+      establishmentScore: 15,
+      scaleScore: 10,
+      productDemandScore: 25,
+      contactInfoScore: 10,
+      businessSignalScore: 5,
+    },
+  };
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/auth/me")) {
+      return new Response(JSON.stringify({ user: principal }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/leads?limit=")) {
+      return new Response(JSON.stringify({ items: [mockLead], total: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/leads/lead-test-01")) {
+      return new Response(JSON.stringify(mockLead), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  render(<WorkspaceApp />);
+
+  // Switch to Lead tab
+  const leadTabBtn = await screen.findByRole("button", { name: "Lead" });
+  fireEvent.click(leadTabBtn);
+
+  // 1. Assert Tier A badge in LeadList
+  expect(await screen.findByText(/Tier A · 85đ/i)).toBeTruthy();
+
+  // 2. Click lead row to view detail
+  fireEvent.click(screen.getByText("Công ty Vận Tải & Logistics Sóng Thần"));
+
+  // 3. Assert AI Lead Scoring breakdown in LeadDetail
+  expect(await screen.findByText(/AI Lead Scoring \(Thang điểm 100\)/i)).toBeTruthy();
+  expect(screen.getByText(/Ngành nghề phù hợp/i)).toBeTruthy();
+  expect(screen.getByText(/Thời gian thành lập/i)).toBeTruthy();
+  expect(screen.getByText(/Nhu cầu SP dự kiến/i)).toBeTruthy();
+});
+
+
+

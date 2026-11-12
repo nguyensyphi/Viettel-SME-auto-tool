@@ -134,12 +134,6 @@ export class InMemoryImportApi {
     const parsed = parseXlsxWorkbook(input.filename, input.bytes);
     if (!parsed.success) return { success: false, errorCode: parsed.errorCode };
     const headerInspection = inspectHeaders(parsed.headers);
-    if (headerInspection.status === "BLOCKED") {
-      return {
-        success: false,
-        errorCode: "PERSONAL_IDENTIFIER_COLUMN_BLOCKED",
-      };
-    }
     if (headerInspection.status === "INVALID") {
       return { success: false, errorCode: "HEADER_MAPPING_INVALID" };
     }

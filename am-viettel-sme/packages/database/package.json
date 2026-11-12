@@ -12,7 +12,10 @@
     "./import-workflow": "./src/import-workflow.ts",
     "./lead-workspace": "./src/lead-workspace.ts",
     "./retention": "./src/retention.ts",
-    "./tasks": "./src/tasks.ts"
+    "./tasks": "./src/tasks.ts",
+    "./google-connections": "./src/google-connections.ts",
+    "./content-library": "./src/content-library-repository.ts",
+    "./partner-campaigns": "./src/partner-campaigns-repository.ts"
   },
   "scripts": {
     "db:validate": "prisma validate --schema prisma/schema.prisma",

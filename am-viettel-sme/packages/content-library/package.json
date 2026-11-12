@@ -9,6 +9,9 @@
     "./google-docs-connector": "./src/google-docs-connector.ts",
     "./google-drive-connector": "./src/google-drive-connector.ts",
     "./media-matcher": "./src/media-matcher.ts",
-    "./publishing-scheduler": "./src/publishing-scheduler.ts"
+    "./publishing-scheduler": "./src/publishing-scheduler.ts",
+    "./google-docs-sync-service": "./src/google-docs-sync-service.ts",
+    "./content-validator": "./src/content-validator.ts",
+    "./publishing-policy": "./src/publishing-policy.ts"
   }
 }

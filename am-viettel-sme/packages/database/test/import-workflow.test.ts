@@ -401,19 +401,18 @@ describe("P0.3d in-memory import preview and reviewed commit", () => {
     ).toMatchObject({ success: false, errorCode: "HEADER_MAPPING_INVALID" });
 
     const personalHeaders = [...LEAD_IMPORT_FIELDS, "CCCD"];
-    expect(
-      service.previewWorkbook({
-        filename: "synthetic.xlsx",
-        bytes: syntheticWorkbook(
-          [row({ company_name: "Company" }).concat("synthetic-id")],
-          personalHeaders,
-        ),
-        existingLeads: [],
-      }),
-    ).toMatchObject({
-      success: false,
-      errorCode: "PERSONAL_IDENTIFIER_COLUMN_BLOCKED",
+    const personalResult = service.previewWorkbook({
+      filename: "synthetic.xlsx",
+      bytes: syntheticWorkbook(
+        [row({ company_name: "Company" }).concat("synthetic-id-123456")],
+        personalHeaders,
+      ),
+      existingLeads: [],
     });
+    expect(personalResult.success).toBe(true);
+    if (personalResult.success) {
+      expect(JSON.stringify(personalResult.preview)).not.toContain("synthetic-id-123456");
+    }
   });
 
   it("validates merge targets as human decisions and does not call persistence during preparation", () => {

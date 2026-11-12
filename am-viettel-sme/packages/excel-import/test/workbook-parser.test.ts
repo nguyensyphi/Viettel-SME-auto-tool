@@ -155,6 +155,37 @@ describe("P0.3d safe XLSX parsing", () => {
     }
   });
 
+  it("parses workbooks whose visible sheet is named other than Leads (e.g. Sheet1)", () => {
+    const customSheetWorkbook = makeZip([
+      {
+        name: "[Content_Types].xml",
+        value:
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+      },
+      {
+        name: "xl/workbook.xml",
+        value:
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" state="visible"/></sheets></workbook>',
+      },
+      {
+        name: "xl/_rels/workbook.xml.rels",
+        value:
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+      },
+      {
+        name: "xl/worksheets/sheet1.xml",
+        value:
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>company_name</t></is></c></row></sheetData></worksheet>',
+      },
+    ]);
+    const result = parseXlsxWorkbook("custom-sheet.xlsx", customSheetWorkbook);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.sheetName).toBe("Sheet1");
+      expect(result.headers).toEqual(["company_name"]);
+    }
+  });
+
   it.each([
     ["empty bytes", Buffer.alloc(0)],
     ["corrupt bytes", Buffer.from("not a workbook")],

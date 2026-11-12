@@ -4,6 +4,7 @@ import {
   normalizeCompanyName,
   normalizePhone,
 } from "@am-sme/excel-import";
+import type { GroupRecord } from "./group-manager.js";
 
 export type PartnerStage =
   | "NEW"
@@ -91,6 +92,29 @@ export interface PartnerReconciliationSummary {
   totalRevenueVnd: number;
   approvedPendingCommissionVnd: number;
   paidCommissionVnd: number;
+}
+
+export interface PartnerTopPerformerSummary extends PartnerReconciliationSummary {
+  fullName: string;
+  profession: PartnerProfession;
+  stage: PartnerStage;
+}
+
+export interface PartnerChannelAnalytics {
+  totalPartners: number;
+  activePartners: number;
+  totalReferrals: number;
+  convertedReferrals: number;
+  conversionRatePercent: number;
+  totalRevenueVnd: number;
+  approvedPendingCommissionVnd: number;
+  paidCommissionVnd: number;
+  topPartners: PartnerTopPerformerSummary[];
+  groupSummary: {
+    totalGroups: number;
+    postableGroups: number;
+    byCategory: Record<string, number>;
+  };
 }
 
 const PARTNER_PII_PATTERN =
@@ -209,6 +233,11 @@ export class PartnerCrmService {
     return Array.from(this.partners.values(), (p) => ({ ...p }));
   }
 
+  getPartner(partnerId: string): PartnerRecord | null {
+    const found = this.partners.get(partnerId);
+    return found ? { ...found } : null;
+  }
+
   recordReferral(input: RecordReferralInput): ReferralRecord {
     const referralId = input.referralId.trim();
     if (!referralId) {
@@ -229,6 +258,12 @@ export class PartnerCrmService {
     }
 
     const normalizedTaxCode = normalizeTaxCode(input.taxCode);
+    for (const existing of this.referrals.values()) {
+      if (existing.normalizedTaxCode === normalizedTaxCode) {
+        throw new Error(`DUPLICATE_REFERRAL_TAX_CODE:${normalizedTaxCode}`);
+      }
+    }
+
     const company = normalizeCompanyName(input.companyName);
     if (!company.display || input.productCodes.length === 0) {
       throw new Error("INVALID_REFERRAL_INPUT");
@@ -246,6 +281,24 @@ export class PartnerCrmService {
 
     this.referrals.set(record.referralId, record);
     return { ...record };
+  }
+
+  listReferrals(partnerId?: string): ReferralRecord[] {
+    const result: ReferralRecord[] = [];
+    for (const ref of this.referrals.values()) {
+      if (partnerId !== undefined && ref.partnerId !== partnerId) continue;
+      result.push({ ...ref, productCodes: [...ref.productCodes] });
+    }
+    return result;
+  }
+
+  listConversions(partnerId?: string): ConversionRecord[] {
+    const result: ConversionRecord[] = [];
+    for (const conv of this.conversions.values()) {
+      if (partnerId !== undefined && conv.partnerId !== partnerId) continue;
+      result.push({ ...conv });
+    }
+    return result;
   }
 
   recordConversion(input: RecordConversionInput): ConversionRecord {
@@ -376,6 +429,88 @@ export class PartnerCrmService {
       totalRevenueVnd,
       approvedPendingCommissionVnd,
       paidCommissionVnd,
+    };
+  }
+
+  getPartnerChannelAnalytics(
+    groups: readonly GroupRecord[] = [],
+  ): PartnerChannelAnalytics {
+    let activePartners = 0;
+    const topPartners: PartnerTopPerformerSummary[] = [];
+
+    for (const partner of this.partners.values()) {
+      if (partner.stage === "ACTIVE_PARTNER") {
+        activePartners += 1;
+      }
+      const recon = this.getPartnerReconciliationSummary(partner.partnerId);
+      topPartners.push({
+        ...recon,
+        fullName: partner.fullName,
+        profession: partner.profession,
+        stage: partner.stage,
+      });
+    }
+
+    topPartners.sort((a, b) => {
+      if (b.totalRevenueVnd !== a.totalRevenueVnd) {
+        return b.totalRevenueVnd - a.totalRevenueVnd;
+      }
+      return b.totalReferrals - a.totalReferrals;
+    });
+
+    const totalReferrals = this.referrals.size;
+    let convertedReferrals = 0;
+    for (const ref of this.referrals.values()) {
+      if (ref.status === "CONVERTED") {
+        convertedReferrals += 1;
+      }
+    }
+
+    let totalRevenueVnd = 0;
+    let approvedPendingCommissionVnd = 0;
+    let paidCommissionVnd = 0;
+    for (const conv of this.conversions.values()) {
+      totalRevenueVnd += conv.contractRevenueVnd;
+      if (conv.payoutStatus === "PAID") {
+        paidCommissionVnd += conv.commissionAmountVnd;
+      } else {
+        approvedPendingCommissionVnd += conv.commissionAmountVnd;
+      }
+    }
+
+    const conversionRatePercent =
+      totalReferrals > 0
+        ? Math.round((convertedReferrals / totalReferrals) * 100)
+        : 0;
+
+    let postableGroups = 0;
+    const byCategory: Record<string, number> = {};
+    for (const grp of groups) {
+      if (
+        grp.active &&
+        (grp.postingPermission === "ALLOWED" ||
+          grp.postingPermission === "MODERATED_ALLOWED")
+      ) {
+        postableGroups += 1;
+      }
+      byCategory[grp.category] = (byCategory[grp.category] ?? 0) + 1;
+    }
+
+    return {
+      totalPartners: this.partners.size,
+      activePartners,
+      totalReferrals,
+      convertedReferrals,
+      conversionRatePercent,
+      totalRevenueVnd,
+      approvedPendingCommissionVnd,
+      paidCommissionVnd,
+      topPartners,
+      groupSummary: {
+        totalGroups: groups.length,
+        postableGroups,
+        byCategory,
+      },
     };
   }
 }

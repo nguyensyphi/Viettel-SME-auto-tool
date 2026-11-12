@@ -42,7 +42,7 @@ export interface ParsedWorkbookRow {
 
 export interface ParsedXlsxWorkbook {
   readonly success: true;
-  readonly sheetName: "Leads";
+  readonly sheetName: string;
   readonly headers: readonly unknown[];
   readonly rows: readonly ParsedWorkbookRow[];
 }
@@ -710,17 +710,15 @@ function parseWorkbookParts(
   }
 
   const sheets = children(child(workbook, "sheets") ?? workbook, "sheet");
-  const leadSheets = sheets.filter(
-    (sheet) => sheet.attributes.name === "Leads",
+  const visibleSheets = sheets.filter(
+    (sheet) =>
+      sheet.attributes.state !== "hidden" &&
+      sheet.attributes.state !== "veryHidden",
   );
-  if (leadSheets.length !== 1) throw new SafeParseError("WORKSHEET_NOT_FOUND");
-  const leadSheet = leadSheets[0]!;
-  if (
-    leadSheet.attributes.state === "hidden" ||
-    leadSheet.attributes.state === "veryHidden"
-  ) {
-    throw new SafeParseError("WORKSHEET_NOT_FOUND");
-  }
+  if (visibleSheets.length === 0) throw new SafeParseError("WORKSHEET_NOT_FOUND");
+  const leadSheet =
+    visibleSheets.find((sheet) => sheet.attributes.name === "Leads") ??
+    visibleSheets[0]!;
   const leadTarget = leadSheet.attributes["r:id"];
   if (!leadTarget) throw new SafeParseError("WORKBOOK_XML_INVALID");
   const leadPath = relationTargets.get(leadTarget);
@@ -755,7 +753,12 @@ function parseWorkbookParts(
       ),
     )
     .map((row) => ({ rowNumber: row.rowNumber, values: [...row.values] }));
-  return { success: true, sheetName: "Leads", headers, rows };
+  return {
+    success: true,
+    sheetName: leadSheet.attributes.name ?? "Leads",
+    headers,
+    rows,
+  };
 }
 
 /**

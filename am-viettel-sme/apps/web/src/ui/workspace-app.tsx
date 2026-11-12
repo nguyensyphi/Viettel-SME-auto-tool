@@ -11,6 +11,8 @@ import {
 import { AccountsView } from "./accounts-view.js";
 import { CalendarView } from "./calendar-view.js";
 import { CampaignView } from "./campaign-view.js";
+import { FacebookAutoPosterView } from "./facebook-auto-poster-view.js";
+import { UIHealthInspector } from "./ui-health-inspector.js";
 
 type Principal = {
   userId: string;
@@ -25,6 +27,7 @@ type Tab =
   | "planner"
   | "accounts"
   | "calendar"
+  | "fb-poster"
   | "campaigns"
   | "team"
   | "audit";
@@ -41,6 +44,18 @@ type Lead = {
     email: string | null;
     contactabilityStatus: string;
   }[];
+  leadScore?: {
+    totalScore: number;
+    tier: "A" | "B" | "C" | "D";
+    recommendedProducts: string[];
+    tierExplanation: string;
+    industryScore: number;
+    establishmentScore: number;
+    scaleScore: number;
+    productDemandScore: number;
+    contactInfoScore: number;
+    businessSignalScore: number;
+  };
 };
 type ImportHandle = {
   handle: string;
@@ -129,15 +144,40 @@ const fieldNames = [
   "notes",
 ];
 
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    credentials: "same-origin",
-    cache: "no-store",
-    ...init,
-  });
-  const payload = (await response.json().catch(() => ({}))) as T & ApiError;
-  if (!response.ok) throw new Error(payload.error ?? `HTTP_${response.status}`);
-  return payload;
+  const isGet = !init?.method || init.method.toUpperCase() === "GET";
+
+  if (isGet) {
+    const existing = inFlightRequests.get(path);
+    if (existing) {
+      return existing as Promise<T>;
+    }
+  }
+
+  const call = (async () => {
+    try {
+      const response = await fetch(`${API}${path}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        ...init,
+      });
+      const payload = (await response.json().catch(() => ({}))) as T & ApiError;
+      if (!response.ok) throw new Error(payload.error ?? `HTTP_${response.status}`);
+      return payload;
+    } finally {
+      if (isGet) {
+        inFlightRequests.delete(path);
+      }
+    }
+  })();
+
+  if (isGet) {
+    inFlightRequests.set(path, call);
+  }
+
+  return call;
 }
 
 function jsonInit(method: string, body: unknown): RequestInit {
@@ -164,6 +204,46 @@ function hcmDate(value: Date | string): string {
 
 function hcmToday(): string {
   return hcmDate(new Date());
+}
+
+function formatUserFacingError(error: string): string {
+  if (error.includes("PERSONAL_IDENTIFIER_COLUMN_BLOCKED")) {
+    return "Phát hiện file chứa cột định danh cá nhân nhạy cảm (CMND, CCCD hoặc Ngày cấp) bị chặn theo Nghị định 13/2023/NĐ-CP để bảo vệ dữ liệu cá nhân. Vui lòng sử dụng file mẫu chuẩn hóa đã lọc bỏ CMND/CCCD hoặc xóa các cột CMND/CCCD trước khi tải lên.";
+  }
+  if (error.includes("WORKSHEET_NOT_FOUND")) {
+    return "Không tìm thấy trang tính hợp lệ trong workbook. Tệp Excel (.xlsx) cần chứa ít nhất một trang tính hợp lệ có tiêu đề.";
+  }
+  if (error.includes("FILE_TOO_LARGE")) {
+    return "Dung lượng tệp vượt quá giới hạn 5 MiB cho phép.";
+  }
+  if (error.includes("FILE_EXTENSION_NOT_ALLOWED")) {
+    return "Định dạng tệp không được hỗ trợ. Chỉ chấp nhận tệp có phần mở rộng .xlsx.";
+  }
+  if (error.includes("EMPTY_FILE")) {
+    return "Tệp Excel tải lên rỗng, không có dữ liệu.";
+  }
+  if (error.includes("HEADER_MAPPING_INVALID")) {
+    return "Cấu trúc cột không hợp lệ hoặc thiếu cột Tên doanh nghiệp bắt buộc.";
+  }
+  if (error.includes("ACTIVE_IMPORT_LIMIT_REACHED")) {
+    return "Đã đạt giới hạn tối đa 10 phiên import đồng thời.";
+  }
+  if (error.includes("LEAD_NOT_FOUND")) {
+    return "Không tìm thấy khách hàng tiềm năng tương ứng.";
+  }
+  if (error.includes("UNAUTHORIZED") || error.includes("HTTP_401")) {
+    return "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+  }
+  if (error.includes("INVALID_REQUEST")) {
+    return "Yêu cầu không hợp lệ. Vui lòng kiểm tra lại nội dung bài viết và danh sách nhóm đã chọn.";
+  }
+  if (error.includes("UNKNOWN_FIELD")) {
+    return "Dữ liệu yêu cầu chứa trường không được hỗ trợ.";
+  }
+  if (error.includes("INVALID_DOCUMENT_FORMAT")) {
+    return "Định dạng tài liệu không hợp lệ. Vui lòng kiểm tra lại cấu trúc bài viết.";
+  }
+  return error;
 }
 
 function Alert({
@@ -222,7 +302,13 @@ function LoginPanel({ onLogin }: { onLogin: (principal: Principal) => void }) {
         <form onSubmit={submit} className="form-stack">
           <label>
             Workspace ID
-            <input name="workspaceId" autoComplete="organization" required />
+            <input
+              name="workspaceId"
+              defaultValue="viettel-sme"
+              placeholder="viettel-sme"
+              autoComplete="organization"
+              required
+            />
           </label>
           <label>
             Email
@@ -237,7 +323,7 @@ function LoginPanel({ onLogin }: { onLogin: (principal: Principal) => void }) {
               required
             />
           </label>
-          {error && <Alert>{error}</Alert>}
+          {error && <Alert>{formatUserFacingError(error)}</Alert>}
           <button className="primary" disabled={busy}>
             {busy ? "Đang xác thực…" : "Đăng nhập"}
           </button>
@@ -335,7 +421,7 @@ function InvitePanel() {
               required
             />
           </label>
-          {error && <Alert>{error}</Alert>}
+          {error && <Alert>{formatUserFacingError(error)}</Alert>}
           <button className="primary" disabled={!tokenReady || !token}>
             Chấp nhận lời mời
           </button>
@@ -352,13 +438,20 @@ export function WorkspaceApp({
 }) {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [checking, setChecking] = useState(initialView === "workspace");
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [tab, setTab] = useState<Tab>("home");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [data, setData] = useState<unknown>(null);
+  const [homeData, setHomeData] = useState<readonly TaskCard[] | null>(null);
+  const [plannerTasks, setPlannerTasks] = useState<readonly TaskCard[] | null>(null);
   const [accountsData, setAccountsData] = useState<unknown>(null);
   const [calendarData, setCalendarData] = useState<unknown>(null);
   const [campaignsData, setCampaignsData] = useState<unknown>(null);
+  const [fbPosterData, setFbPosterData] = useState<any>(null);
+  const [teamData, setTeamData] = useState<unknown>(null);
+  const [auditData, setAuditData] = useState<unknown>(null);
+  const [activeOutreachBatch, setActiveOutreachBatch] = useState<unknown>(null);
   const [leadList, setLeadList] = useState<unknown>(null);
   const [leadDetail, setLeadDetail] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -370,6 +463,8 @@ export function WorkspaceApp({
   const activeTabRef = useRef<Tab>(tab);
   activeTabRef.current = tab;
   const loadSeqRef = useRef(0);
+  const lastFetchedAtRef = useRef<Record<string, number>>({});
+  const CACHE_TTL_MS = 60_000;
   const [commitIdempotencyKey, setCommitIdempotencyKey] = useState("");
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [decisions, setDecisions] = useState<Record<number, string>>({});
@@ -402,37 +497,68 @@ export function WorkspaceApp({
       { id: "planner", label: "Tác vụ & Planner" },
       { id: "accounts", label: "Tài khoản & Phiên" },
       { id: "calendar", label: "Lịch nội dung" },
+      { id: "fb-poster", label: "Auto Poster Facebook" },
       { id: "campaigns", label: "Chiến dịch & CTV" },
       ...(canSeeAdmin
         ? [
-            { id: "team" as const, label: "Nhóm & quyền" },
-            { id: "audit" as const, label: "Audit" },
-          ]
+          { id: "team" as const, label: "Nhóm & quyền" },
+          { id: "audit" as const, label: "Audit" },
+        ]
         : []),
     ],
     [canSeeAdmin],
   );
 
-  async function loadTab(selected = tab) {
+  async function loadTab(selected = tab, options?: { force?: boolean }) {
     const seq = ++loadSeqRef.current;
     const isCurrent = () =>
       seq === loadSeqRef.current && activeTabRef.current === selected;
+
+    const lastFetched = lastFetchedAtRef.current[selected] ?? 0;
+    const isFresh = Date.now() - lastFetched < CACHE_TTL_MS;
+    const hasData =
+      (selected === "home" && (homeData !== null || (data !== null && activeTabRef.current === "home"))) ||
+      (selected === "leads" && leadList !== null) ||
+      (selected === "planner" && plannerTasks !== null) ||
+      (selected === "accounts" && accountsData !== null) ||
+      (selected === "calendar" && calendarData !== null) ||
+      (selected === "fb-poster" && fbPosterData !== null) ||
+      (selected === "campaigns" && campaignsData !== null) ||
+      (selected === "team" && teamData !== null) ||
+      (selected === "audit" && auditData !== null);
+
+    if (!options?.force && isFresh && hasData) {
+      return;
+    }
+
     setError("");
     setNotice("");
-    setBusy(true);
+    if (!hasData || options?.force) {
+      setBusy(true);
+    }
     try {
       if (selected === "home") {
         const [openTasks, inProgressTasks] = await Promise.all([
           api<TaskCard[]>("/tasks?status=OPEN"),
           api<TaskCard[]>("/tasks?status=IN_PROGRESS"),
         ]);
-        if (isCurrent()) setData([...openTasks, ...inProgressTasks]);
+        if (isCurrent()) {
+          const map = new Map<string, TaskCard>();
+          for (const item of [...openTasks, ...inProgressTasks]) {
+            map.set(item.id, item);
+          }
+          const taskList = Array.from(map.values());
+          setHomeData(taskList);
+          setData(taskList);
+          lastFetchedAtRef.current["home"] = Date.now();
+        }
       }
       if (selected === "leads") {
         const leads = await api("/leads?limit=50&offset=0");
         if (isCurrent()) {
           setLeadList(leads);
           setData(leads);
+          lastFetchedAtRef.current["leads"] = Date.now();
         }
       }
       if (selected === "planner") {
@@ -443,49 +569,191 @@ export function WorkspaceApp({
             api<{ items?: Lead[] }>("/leads?limit=100&offset=0"),
             principal?.role === "AM"
               ? Promise.resolve({
-                  items: [
-                    {
-                      id: principal.userId,
-                      displayName: principal.userId,
-                      role: "AM",
-                    },
-                  ],
-                })
+                items: [
+                  {
+                    id: principal.userId,
+                    displayName: principal.userId,
+                    role: "AM",
+                  },
+                ],
+              })
               : api<{
-                  items?: {
-                    id: string;
-                    displayName: string | null;
-                    role: string;
-                  }[];
-                }>("/users"),
+                items?: {
+                  id: string;
+                  displayName: string | null;
+                  role: string;
+                }[];
+              }>("/users"),
           ]);
         if (isCurrent()) {
-          setData([...openTasks, ...inProgressTasks]);
+          const tasks = [...openTasks, ...inProgressTasks] as TaskCard[];
+          setPlannerTasks(tasks);
+          setData(tasks);
           setPlannerLeads(leadResult.items ?? []);
           setPlannerUsers(
             (usersResult.items ?? []).filter((user) => user.role === "AM"),
           );
+          lastFetchedAtRef.current["planner"] = Date.now();
         }
       }
       if (selected === "accounts") {
-        const accounts = await api("/social-accounts");
+        const [accounts, opsStatus] = await Promise.all([
+          api<any>("/social-accounts"),
+          api<{ killSwitch?: unknown }>("/ops/status").catch(() => null),
+        ]);
+        const items = Array.isArray(accounts)
+          ? accounts
+          : Array.isArray(accounts?.items)
+            ? accounts.items
+            : [];
+        const combined = {
+          items,
+          ...(opsStatus?.killSwitch
+            ? { killSwitch: opsStatus.killSwitch }
+            : {}),
+        };
         if (isCurrent()) {
-          setAccountsData(accounts);
-          setData(accounts);
+          setAccountsData(combined);
+          setData(combined);
+          lastFetchedAtRef.current["accounts"] = Date.now();
         }
       }
       if (selected === "calendar") {
-        const calendar = await api("/publishing-calendar");
+        const [calendar, contentsRes, jobsRes, analyticsRes] = await Promise.all([
+          api<any>("/publishing-calendar"),
+          api<{ items?: unknown[]; posts?: unknown[] }>("/contents").catch(() => null),
+          api<{ items?: unknown[]; jobs?: unknown[] }>("/publishing/jobs").catch(() => null),
+          api("/analytics/publishing-summary").catch(() => null),
+        ]);
+        const items = Array.isArray(calendar)
+          ? calendar
+          : Array.isArray(calendar?.items)
+            ? calendar.items
+            : [];
+        const contentsList = contentsRes?.items ?? contentsRes?.posts;
+        const jobsList = jobsRes?.jobs ?? jobsRes?.items;
+        const combined = {
+          items,
+          ...(Array.isArray(contentsList) ? { contents: contentsList } : {}),
+          ...(Array.isArray(jobsList) ? { jobs: jobsList } : {}),
+          ...(analyticsRes &&
+            typeof analyticsRes === "object" &&
+            !Array.isArray(analyticsRes) &&
+            "posts" in analyticsRes
+            ? { analytics: analyticsRes }
+            : {}),
+        };
         if (isCurrent()) {
-          setCalendarData(calendar);
-          setData(calendar);
+          setCalendarData(combined);
+          setData(combined);
+          lastFetchedAtRef.current["calendar"] = Date.now();
         }
       }
       if (selected === "campaigns") {
-        const overview = await api("/campaigns-overview");
+        const [overview, leadsRes, groupJobsRes, accountsRes] = await Promise.all([
+          api("/campaigns-overview"),
+          api<{ leads: any[] }>("/leads?limit=50&offset=0").catch(() => ({ leads: [] })),
+          api<{ jobs?: unknown[] }>("/campaigns/group-jobs").catch(() => ({ jobs: [] })),
+          api<any>("/social-accounts").catch(() => []),
+        ]);
+        const accountsList = Array.isArray(accountsRes)
+          ? accountsRes
+          : Array.isArray(accountsRes?.items)
+            ? accountsRes.items
+            : [];
+        const combined = {
+          ...(typeof overview === "object" && overview ? overview : {}),
+          leads: (leadsRes as any)?.leads ?? [],
+          groupJobs: groupJobsRes?.jobs ?? [],
+          accounts: accountsList,
+          activeOutreachBatch,
+        };
         if (isCurrent()) {
-          setCampaignsData(overview);
-          setData(overview);
+          setCampaignsData(combined);
+          setData(combined);
+          lastFetchedAtRef.current["campaigns"] = Date.now();
+        }
+      }
+      if (selected === "fb-poster") {
+        const [accountsRes, overviewRes, groupJobsRes, contentsRes] = await Promise.all([
+          api<any>("/social-accounts").catch(() => []),
+          api<any>("/campaigns-overview").catch(() => null),
+          api<any>("/campaigns/group-jobs").catch(() => ({ jobs: [] })),
+          api<any>("/contents").catch(() => ({ items: [], posts: [] })),
+        ]);
+        const accountsList = Array.isArray(accountsRes)
+          ? accountsRes
+          : Array.isArray(accountsRes?.items)
+            ? accountsRes.items
+            : [];
+        const groupsList = Array.isArray(overviewRes?.groups) ? overviewRes.groups : [];
+        const contentsList = Array.isArray(contentsRes?.items)
+          ? contentsRes.items
+          : Array.isArray(contentsRes?.posts)
+            ? contentsRes.posts
+            : Array.isArray(contentsRes)
+              ? contentsRes
+              : [];
+        const postsList = contentsList.map((c: any) => ({
+          id: c.id ?? c.contentId ?? c.postCode ?? "POST-1",
+          title: c.title ?? c.topic ?? c.id ?? "Bài viết",
+          content: c.body ?? c.rawContent ?? c.content ?? c.topic ?? c.title ?? "",
+          mediaPaths:
+            Array.isArray(c.mediaPaths) && c.mediaPaths.length > 0
+              ? c.mediaPaths
+              : c.mediaHint && typeof c.mediaHint === "string" && c.mediaHint !== "AUTO"
+                ? [c.mediaHint]
+                : [
+                    c.topicCode === "CHU_KY_SO"
+                      ? "https://images.unsplash.com/photo-1450133064473-71024230f91b?w=600&auto=format&fit=crop&q=80"
+                      : c.topicCode === "HOA_DON_DIEN_TU"
+                        ? "https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=600&auto=format&fit=crop&q=80"
+                        : "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=600&auto=format&fit=crop&q=80",
+                  ],
+          createdAt: c.createdAt,
+        }));
+        const rawJobs = Array.isArray(groupJobsRes?.jobs)
+          ? groupJobsRes.jobs
+          : Array.isArray(groupJobsRes)
+            ? groupJobsRes
+            : [];
+        const jobsList = rawJobs.map((j: any) => ({
+          jobId: j.id ?? j.jobId ?? "job-1",
+          campaignId: j.campaignId,
+          groupName: j.groupName ?? j.groupId ?? "Nhóm Facebook",
+          groupUrl: j.groupUrl ?? "",
+          accountId: j.accountId ?? "fb-viettel-sme",
+          content: j.content ?? "",
+          status: j.status ?? "QUEUED",
+          postUrl: j.postUrl ?? j.publishedUrl,
+          error: j.error,
+          dispatchedAt: j.dispatchedAt ?? new Date().toISOString(),
+          executedAt: j.executedAt,
+        }));
+        const fbAccounts = accountsList.filter(
+          (a: any) =>
+            a.platform === "FACEBOOK" ||
+            (!String(a.accountId).toLowerCase().startsWith("zalo") && a.platform !== "ZALO"),
+        );
+        const fbGroups = groupsList.filter(
+          (g: any) =>
+            g.platform === "FACEBOOK" ||
+            (!String(g.url).includes("zalo.me") && g.platform !== "ZALO"),
+        );
+        const fbJobs = jobsList.filter(
+          (j: any) => !String(j.groupUrl).includes("zalo.me"),
+        );
+        const combined = {
+          accounts: fbAccounts,
+          groups: fbGroups,
+          posts: postsList,
+          libraryPosts: postsList,
+          logs: fbJobs,
+        };
+        if (isCurrent()) {
+          setFbPosterData(combined);
+          setData(combined);
+          lastFetchedAtRef.current["fb-poster"] = Date.now();
         }
       }
       if (selected === "team") {
@@ -493,11 +761,20 @@ export function WorkspaceApp({
           api("/users"),
           api("/teams"),
         ]);
-        if (isCurrent()) setData({ users, teams });
+        if (isCurrent()) {
+          const combined = { users, teams };
+          setTeamData(combined);
+          setData(combined);
+          lastFetchedAtRef.current["team"] = Date.now();
+        }
       }
       if (selected === "audit") {
         const audit = await api("/audit-events?limit=50&offset=0");
-        if (isCurrent()) setData(audit);
+        if (isCurrent()) {
+          setAuditData(audit);
+          setData(audit);
+          lastFetchedAtRef.current["audit"] = Date.now();
+        }
       }
     } catch (cause) {
       if (isCurrent()) {
@@ -523,6 +800,16 @@ export function WorkspaceApp({
     }
     setPrincipal(null);
     setData(null);
+    setHomeData(null);
+    setLeadList(null);
+    setPlannerTasks(null);
+    setAccountsData(null);
+    setCalendarData(null);
+    setFbPosterData(null);
+    setCampaignsData(null);
+    setTeamData(null);
+    setAuditData(null);
+    lastFetchedAtRef.current = {};
     setSelectedLead(null);
   }
 
@@ -540,7 +827,7 @@ export function WorkspaceApp({
   }
 
   async function refresh() {
-    await loadTab(tab);
+    await loadTab(tab, { force: true });
   }
 
   if (initialView === "invite") return <InvitePanel />;
@@ -640,8 +927,13 @@ export function WorkspaceApp({
         ),
       );
       setDecisions({});
+      const hasSensitive = result.headerInspection?.quarantinedColumns.some(
+        (q) => q.classification === "PERSONAL_IDENTIFIER",
+      );
       setNotice(
-        "Đã đọc tiêu đề workbook. Hãy kiểm tra allow-list mapping trước khi tạo preview.",
+        hasSensitive
+          ? "Đã đọc tiêu đề workbook. Các cột CMND/CCCD/Ngày cấp đã được tự động loại bỏ để bảo vệ an toàn PII theo Nghị định 13/2023/NĐ-CP. Hãy kiểm tra mapping trước khi tạo preview."
+          : "Đã đọc tiêu đề workbook. Hãy kiểm tra allow-list mapping trước khi tạo preview.",
       );
     } catch (cause) {
       setError(
@@ -724,10 +1016,10 @@ export function WorkspaceApp({
       setImportHandle((current) =>
         current
           ? {
-              ...current,
-              status: "APPROVED",
-              ...(result.summary ? { summary: result.summary } : {}),
-            }
+            ...current,
+            status: "APPROVED",
+            ...(result.summary ? { summary: result.summary } : {}),
+          }
           : current,
       );
       setNotice(
@@ -786,7 +1078,7 @@ export function WorkspaceApp({
         `/tasks/${encodeURIComponent(taskId)}/complete`,
         jsonInit("POST", { outcome }),
       );
-      await loadTab("planner");
+      await loadTab(tab);
       setNotice("Đã hoàn tất task.");
     } catch (cause) {
       setError(
@@ -805,7 +1097,7 @@ export function WorkspaceApp({
         `/tasks/${encodeURIComponent(taskId)}/defer`,
         jsonInit("POST", { reason }),
       );
-      await loadTab("planner");
+      await loadTab(tab);
       setNotice("Đã hoãn task và ghi nhận lý do.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể hoãn task.");
@@ -886,6 +1178,26 @@ export function WorkspaceApp({
           VT <span>AM SME</span>
         </a>
         <div className="account">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setIsInspectorOpen(true)}
+            style={{
+              padding: "4px 10px",
+              fontSize: 12,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              backgroundColor: "#f0fdfa",
+              color: "#0f766e",
+              border: "1px solid #99f6e4",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            <span>🔍</span> Kiểm tra UI/UX
+          </button>
           <span className="role-chip">{principal.role}</span>
           <span className="account-id" title={principal.userId}>
             Tài khoản {principal.userId.slice(0, 8)}
@@ -906,9 +1218,12 @@ export function WorkspaceApp({
                 aria-current={tab === item.id ? "page" : undefined}
                 onClick={() => {
                   activeTabRef.current = item.id;
+                  setError("");
+                  setNotice("");
                   setTab(item.id);
-                  setData(null);
-                  setSelectedLead(null);
+                  if (item.id !== "leads") {
+                    setSelectedLead(null);
+                  }
                 }}
               >
                 {item.label}
@@ -934,11 +1249,11 @@ export function WorkspaceApp({
               {busy ? "Đang tải…" : "Làm mới"}
             </button>
           </div>
-          {error && <Alert>{error}</Alert>}
+          {error && <Alert>{formatUserFacingError(error)}</Alert>}
           {notice && <Alert kind="success">{notice}</Alert>}
           {tab === "home" && (
             <TodayDashboard
-              data={data}
+              data={homeData ?? (Array.isArray(data) ? (data as readonly TaskCard[]) : null)}
               onComplete={(id) => void completeTask(id)}
               onDefer={(id) => void deferTask(id)}
               onOpenPlanner={() => setTab("planner")}
@@ -1060,7 +1375,7 @@ export function WorkspaceApp({
               <div className="panel">
                 <h2>Task list</h2>
                 <TaskList
-                  data={data}
+                  data={plannerTasks ?? (Array.isArray(data) ? (data as readonly TaskCard[]) : null)}
                   onComplete={(id) => void completeTask(id)}
                   onDefer={(id) => void deferTask(id)}
                 />
@@ -1184,7 +1499,7 @@ export function WorkspaceApp({
             <section className="panel-grid">
               <div className="panel">
                 <h2>Thành viên trong phạm vi được phép</h2>
-                <TeamView data={data} />
+                <TeamView data={teamData ?? data} />
                 <button
                   className="secondary"
                   onClick={() => void loadTab("team")}
@@ -1238,7 +1553,7 @@ export function WorkspaceApp({
           )}
           {tab === "accounts" && (
             <AccountsView
-              data={accountsData ?? data}
+              data={accountsData}
               onTriggerQrLogin={(accountId, platform) => {
                 void (async () => {
                   setError("");
@@ -1251,7 +1566,7 @@ export function WorkspaceApp({
                       await loadTab("accounts");
                     }
                     setNotice(
-                      `Đã gửi yêu cầu mở trình duyệt quét QR cho ${platform} (${accountId}).`,
+                      `Đã khởi chạy cửa sổ Playwright quét QR cho ${platform} (${accountId}).`,
                     );
                   } catch (cause) {
                     setError(
@@ -1262,11 +1577,97 @@ export function WorkspaceApp({
                   }
                 })();
               }}
+              onConnectAccount={(accountId, platform) => {
+                void (async () => {
+                  setError("");
+                  try {
+                    await api(
+                      `/social-accounts/${encodeURIComponent(accountId)}/connect`,
+                      jsonInit("POST", { platform }),
+                    );
+                    if (activeTabRef.current === "accounts") {
+                      await loadTab("accounts");
+                    }
+                    setNotice(
+                      `Đã kết nối thành công tài khoản ${platform} (${accountId})!`,
+                    );
+                  } catch (cause) {
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "CONNECT_FAILED",
+                    );
+                  }
+                })();
+              }}
+              onDeclareAccount={async (accountId, platform) => {
+                setError("");
+                try {
+                  await api(
+                    `/social-accounts`,
+                    jsonInit("POST", { accountId, platform }),
+                  );
+                  if (activeTabRef.current === "accounts") {
+                    await loadTab("accounts");
+                  }
+                  setNotice(`Đã khai báo tài khoản mới ${platform} (${accountId}).`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "DECLARE_ACCOUNT_FAILED",
+                  );
+                }
+              }}
+              onToggleKillSwitch={async (active, reason) => {
+                setError("");
+                try {
+                  await api(
+                    `/ops/kill-switch`,
+                    jsonInit("POST", { active, ...(reason ? { reason } : {}) }),
+                  );
+                  if (activeTabRef.current === "accounts") {
+                    await loadTab("accounts");
+                  }
+                  setNotice(
+                    active
+                      ? "Đã kích hoạt Công tắc Dừng Khẩn cấp Toàn hệ thống!"
+                      : "Đã khôi phục hoạt động toàn hệ thống.",
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "KILL_SWITCH_FAILED",
+                  );
+                }
+              }}
+              onResetCircuit={async (accountId, platform) => {
+                setError("");
+                try {
+                  await api(
+                    `/social-accounts/${encodeURIComponent(accountId)}/reset-circuit`,
+                    jsonInit("POST", { platform }),
+                  );
+                  if (activeTabRef.current === "accounts") {
+                    await loadTab("accounts");
+                  }
+                  setNotice(
+                    `Đã khôi phục Circuit Breaker cho tài khoản ${platform} (${accountId}).`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RESET_CIRCUIT_FAILED",
+                  );
+                }
+              }}
             />
           )}
           {tab === "calendar" && (
             <CalendarView
-              data={calendarData ?? data}
+              data={calendarData}
               onApprovePost={(contentId) => {
                 void (async () => {
                   setError("");
@@ -1288,9 +1689,575 @@ export function WorkspaceApp({
                   }
                 })();
               }}
+              onSchedulePost={async (input) => {
+                setError("");
+                try {
+                  await api(`/publishing-calendar`, jsonInit("POST", input));
+                  if (activeTabRef.current === "calendar") {
+                    await loadTab("calendar");
+                  }
+                  setNotice(`Đã lên lịch thành công bài viết ${input.contentId}!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "SCHEDULE_POST_FAILED",
+                  );
+                }
+              }}
+              onImportGoogleDocsText={async (rawText) => {
+                setError("");
+                try {
+                  const res = await api<{ importedCount?: number }>(
+                    `/contents/import-text`,
+                    jsonInit("POST", { rawText }),
+                  );
+                  if (activeTabRef.current === "calendar") {
+                    await loadTab("calendar");
+                  }
+                  setNotice(
+                    `Đã nhập ${res.importedCount ?? 1} bài viết từ Google Docs vào Thư viện!`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "IMPORT_GOOGLE_DOCS_FAILED",
+                  );
+                }
+              }}
+              onMatchMedia={async (postId) => {
+                setError("");
+                try {
+                  const res = await api<{ matched?: unknown[] }>(
+                    `/contents/${encodeURIComponent(postId)}/match-media`,
+                    jsonInit("POST", {}),
+                  );
+                  if (activeTabRef.current === "calendar") {
+                    await loadTab("calendar");
+                  }
+                  setNotice(
+                    `Đã ghép tự động ${res.matched?.length ?? 0} hình ảnh từ Google Drive!`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error ? cause.message : "MATCH_MEDIA_FAILED",
+                  );
+                }
+              }}
+              onValidateContent={async (postId) => {
+                setError("");
+                try {
+                  const res = await api<{ valid?: boolean; errors?: string[] }>(
+                    `/contents/${encodeURIComponent(postId)}/validate`,
+                    jsonInit("POST", {}),
+                  );
+                  if (res.valid) {
+                    setNotice(`Bài viết hợp lệ, sẵn sàng xuất bản!`);
+                  } else {
+                    setError(
+                      `Bài viết chưa đạt chuẩn: ${(res.errors ?? []).join(", ")}`,
+                    );
+                  }
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "VALIDATE_CONTENT_FAILED",
+                  );
+                }
+              }}
+              onConfirmAssistedJob={async (jobId) => {
+                setError("");
+                try {
+                  await api(
+                    `/publishing/jobs/${encodeURIComponent(jobId)}/confirm-assisted`,
+                    jsonInit("POST", {}),
+                  );
+                  if (activeTabRef.current === "calendar") {
+                    await loadTab("calendar");
+                  }
+                  setNotice(`Đã xác nhận xuất bản thành công bài viết (${jobId})!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "CONFIRM_ASSISTED_JOB_FAILED",
+                  );
+                }
+              }}
             />
           )}
-          {tab === "campaigns" && <CampaignView data={campaignsData ?? data} />}
+          {tab === "fb-poster" && (
+            <FacebookAutoPosterView
+              accounts={
+                (fbPosterData?.accounts ??
+                  (data && typeof data === "object" && "accounts" in data
+                    ? (data as any).accounts
+                    : [])) ||
+                []
+              }
+              posts={
+                (fbPosterData?.posts ??
+                  (data && typeof data === "object" && "posts" in data
+                    ? (data as any).posts
+                    : [])) ||
+                []
+              }
+              groups={
+                (fbPosterData?.groups ??
+                  (data && typeof data === "object" && "groups" in data
+                    ? (data as any).groups
+                    : [])) ||
+                []
+              }
+              logs={
+                (fbPosterData?.logs ??
+                  (data && typeof data === "object" && "logs" in data
+                    ? (data as any).logs
+                    : [])) ||
+                []
+              }
+              libraryPosts={
+                (fbPosterData?.libraryPosts ??
+                  (data && typeof data === "object" && "libraryPosts" in data
+                    ? (data as any).libraryPosts
+                    : [])) ||
+                []
+              }
+              onDispatchPost={async ({ accountId, postId, groupIds, delaySeconds }) => {
+                setError("");
+                try {
+                  const currentPosts =
+                    fbPosterData?.posts ??
+                    (data && typeof data === "object" && "posts" in data
+                      ? (data as any).posts
+                      : []);
+                  const targetPost = currentPosts?.find(
+                    (p: any) => p.id === postId,
+                  );
+                  const content =
+                    (targetPost?.content && targetPost.content.trim()) ||
+                    (targetPost?.body && targetPost.body.trim()) ||
+                    (targetPost?.title && targetPost.title.trim()) ||
+                    "Nội dung bài viết giải pháp số Viettel SME";
+                  await api(
+                    `/fb-poster/dispatch-post`,
+                    jsonInit("POST", {
+                      accountId,
+                      postId,
+                      postTitle: targetPost?.title ?? postId,
+                      content,
+                      groupIds,
+                      delaySeconds: delaySeconds ?? 60,
+                    }),
+                  );
+                  if (activeTabRef.current === "fb-poster") {
+                    await loadTab("fb-poster");
+                  }
+                  setNotice(
+                    `Đã tạo và điều phối lịch đăng cho ${groupIds.length} nhóm thành công!`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "DISPATCH_FB_POST_FAILED",
+                  );
+                }
+              }}
+              onDispatchPagePost={async ({ accountId, postId, targetType, targetUrl, callToActionUrl }) => {
+                setError("");
+                try {
+                  const currentPosts =
+                    fbPosterData?.posts ??
+                    (data && typeof data === "object" && "posts" in data
+                      ? (data as any).posts
+                      : []);
+                  const targetPost = currentPosts?.find(
+                    (p: any) => p.id === postId,
+                  );
+                  const content =
+                    (targetPost?.content && targetPost.content.trim()) ||
+                    (targetPost?.body && targetPost.body.trim()) ||
+                    (targetPost?.title && targetPost.title.trim()) ||
+                    "Nội dung bài viết giải pháp số Viettel SME";
+                  await api(
+                    `/fb-poster/dispatch-page-post`,
+                    jsonInit("POST", {
+                      accountId,
+                      postId,
+                      postTitle: targetPost?.title ?? postId,
+                      content,
+                      targetType,
+                      ...(targetUrl ? { targetUrl } : {}),
+                      ...(callToActionUrl ? { callToActionUrl } : {}),
+                      ...(targetPost?.mediaPaths ? { mediaPaths: targetPost.mediaPaths } : {}),
+                    }),
+                  );
+                  if (activeTabRef.current === "fb-poster") {
+                    await loadTab("fb-poster");
+                  }
+                  setNotice(
+                    `Đã tạo lệnh phát sóng bài viết lên ${targetType === "FANPAGE" ? "Fanpage" : "Trang cá nhân"} thành công!`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "DISPATCH_PAGE_POST_FAILED",
+                  );
+                }
+              }}
+              onRunJob={async (jobId) => {
+                setError("");
+                try {
+                  const res = await api<{ status?: string; postUrl?: string }>(
+                    `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
+                    jsonInit("POST", {}),
+                  );
+                  if (activeTabRef.current === "fb-poster") {
+                    await loadTab("fb-poster");
+                  }
+                  setNotice(
+                    `Đã đăng bài thành công (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RUN_FB_JOB_FAILED",
+                  );
+                }
+              }}
+              onCreatePost={async ({ title, content, mediaPaths }) => {
+                setError("");
+                try {
+                  await api(
+                    `/contents`,
+                    jsonInit("POST", {
+                      title,
+                      content,
+                      topic: "CHU_KY_SO",
+                      platforms: ["FACEBOOK"],
+                      mediaPaths: mediaPaths ?? [],
+                    }),
+                  );
+                  if (activeTabRef.current === "fb-poster") {
+                    await loadTab("fb-poster", { force: true });
+                  }
+                  setNotice(`Đã thêm bài viết mới vào Master Posts thành công!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "CREATE_POST_FAILED",
+                  );
+                }
+              }}
+          onDeleteGroup={async (groupId) => {
+            setError("");
+            try {
+              await api(`/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+              if (activeTabRef.current === "fb-poster") {
+                await loadTab("fb-poster", { force: true });
+              }
+              setNotice("Đã xoá nhóm khỏi danh sách mục tiêu.");
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "DELETE_GROUP_FAILED");
+            }
+          }}
+          onBulkImportGroups={async (urls) => {
+            setError("");
+            try {
+              const res = await api<{ added: number; existing: number }>(
+                `/groups/bulk-import`,
+                jsonInit("POST", { urls, platform: "FACEBOOK" }),
+              );
+              if (activeTabRef.current === "fb-poster") {
+                await loadTab("fb-poster");
+              }
+              setNotice(
+                `Đã import thành công ${res.added} nhóm mới (${res.existing} nhóm đã tồn tại).`,
+              );
+            } catch (cause) {
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "BULK_IMPORT_GROUPS_FAILED",
+              );
+            }
+          }}
+          onSyncAccounts={async () => {
+            setError("");
+            try {
+              const res = await api<any>(`/fb-poster/sync-accounts`, jsonInit("POST", {}));
+              if (activeTabRef.current === "fb-poster") {
+                await loadTab("fb-poster");
+              }
+              const count = res?.accounts?.length ?? 0;
+              setNotice(`Đã quét và đồng bộ ${count} tài khoản Facebook thành công!`);
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "SYNC_ACCOUNTS_FAILED");
+            }
+          }}
+          onLaunchBrowser={async (accountId) => {
+            setError("");
+            try {
+              await api(`/social-accounts/launch-browser`, jsonInit("POST", { accountId, platform: "FACEBOOK" }));
+              setNotice(`Đang mở Google Chrome cho tài khoản [${accountId}]. Hãy hoàn tất đăng nhập trên màn hình.`);
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "LAUNCH_BROWSER_FAILED");
+            }
+          }}
+          onAddAccount={async (accountName) => {
+            setError("");
+            try {
+              await api(`/social-accounts/declare-and-launch`, jsonInit("POST", { accountName, platform: "FACEBOOK" }));
+              if (activeTabRef.current === "fb-poster") {
+                await loadTab("fb-poster");
+              }
+              setNotice(`Đã tạo hồ sơ cho [${accountName}] và mở Google Chrome đăng nhập.`);
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "ADD_ACCOUNT_FAILED");
+            }
+          }}
+            />
+          )}
+          {tab === "campaigns" && (
+            <CampaignView
+              data={campaignsData}
+              onApproveCampaign={async (campaignId) => {
+                setError("");
+                try {
+                  await api(
+                    `/campaigns/${encodeURIComponent(campaignId)}/approve`,
+                    jsonInit("POST", {}),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã phê duyệt chiến dịch ${campaignId}.`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "APPROVE_CAMPAIGN_FAILED",
+                  );
+                }
+              }}
+              onDispatchCampaign={async (campaignId, options) => {
+                setError("");
+                try {
+                  const res = await api<{ jobs?: unknown[]; skippedGroups?: unknown[] }>(
+                    `/campaigns/${encodeURIComponent(campaignId)}/dispatch`,
+                    jsonInit("POST", {
+                      accountId: options?.accountId ?? "fb-viettel-sme",
+                      groupIds: options?.groupIds,
+                    }),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(
+                    `Đã điều phối chiến dịch ${campaignId}: ${res.jobs?.length ?? 0} nhóm hợp lệ, ${res.skippedGroups?.length ?? 0} nhóm bỏ qua.`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "DISPATCH_CAMPAIGN_FAILED",
+                  );
+                }
+              }}
+              onRunGroupJob={async (jobId) => {
+                setError("");
+                try {
+                  const res = await api<{ status?: string; postUrl?: string }>(
+                    `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
+                    jsonInit("POST", {}),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(
+                    `Đã thực thi đăng bài (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RUN_GROUP_JOB_FAILED",
+                  );
+                }
+              }}
+              onBulkImportGroups={async (urls) => {
+                setError("");
+                try {
+                  const res = await api<{ added: number; existing: number }>(
+                    `/groups/bulk-import`,
+                    jsonInit("POST", { urls, platform: "FACEBOOK" }),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(
+                    `Đã nhập hàng loạt nhóm Facebook: ${res.added} nhóm mới, ${res.existing} nhóm đã tồn tại.`,
+                  );
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "BULK_IMPORT_GROUPS_FAILED",
+                  );
+                }
+              }}
+              onRegisterGroup={async (input) => {
+                setError("");
+                try {
+                  await api(`/groups`, jsonInit("POST", input));
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã thêm hội nhóm ${input.name} (${input.groupId})!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "REGISTER_GROUP_FAILED",
+                  );
+                }
+              }}
+              onRecordReferral={async (input) => {
+                setError("");
+                try {
+                  await api(
+                    `/partners/${encodeURIComponent(input.partnerId)}/referrals`,
+                    jsonInit("POST", {
+                      referralId: input.referralId,
+                      companyName: input.companyName,
+                      taxCode: input.taxCode,
+                      productCodes: input.productCodes,
+                    }),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã ghi nhận giới thiệu SME ${input.companyName} (${input.taxCode})!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RECORD_REFERRAL_FAILED",
+                  );
+                }
+              }}
+              onMarkConversionPaid={async (conversionId, payoutReference) => {
+                setError("");
+                try {
+                  await api(
+                    `/partners/conversions/${encodeURIComponent(conversionId)}/payout`,
+                    jsonInit("POST", { payoutReference }),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã xác nhận chi trả hoa hồng (${payoutReference})!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "PAYOUT_CONVERSION_FAILED",
+                  );
+                }
+              }}
+              onCreateCampaign={async (input) => {
+                setError("");
+                try {
+                  await api(`/campaigns`, jsonInit("POST", input));
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã tạo mới chiến dịch ${input.campaignId}!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "CREATE_CAMPAIGN_FAILED",
+                  );
+                }
+              }}
+              onRegisterPartner={async (input) => {
+                setError("");
+                try {
+                  await api(`/partners`, jsonInit("POST", input));
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã đăng ký CTV ${input.fullName} (${input.partnerId})!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "REGISTER_PARTNER_FAILED",
+                  );
+                }
+              }}
+              onTransitionPartnerStage={async (partnerId, newStage) => {
+                setError("");
+                try {
+                  await api(
+                    `/partners/${encodeURIComponent(partnerId)}/stage`,
+                    jsonInit("POST", { newStage }),
+                  );
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã chuyển giai đoạn CTV ${partnerId} sang ${newStage}.`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "TRANSITION_PARTNER_STAGE_FAILED",
+                  );
+                }
+              }}
+              onCreateOutreachBatch={async (input) => {
+                setError("");
+                try {
+                  const res = await api<any>(`/outreach/batches`, jsonInit("POST", input));
+                  setActiveOutreachBatch(res);
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã khởi tạo đợt tiếp cận Zalo "${input.batchName}" (${input.leadIds.length} khách hàng)!`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "CREATE_OUTREACH_BATCH_FAILED",
+                  );
+                }
+              }}
+              onRunNextOutreachTask={async (batchId) => {
+                setError("");
+                try {
+                  const res = await api<any>(`/outreach/batches/${encodeURIComponent(batchId)}/run-next`, jsonInit("POST", {}));
+                  setActiveOutreachBatch(res.batch);
+                  if (activeTabRef.current === "campaigns") {
+                    await loadTab("campaigns");
+                  }
+                  setNotice(`Đã xử lý: Khách hàng ${res.leadId} -> Trạng thái: ${res.result?.status ?? "Xong"}`);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "RUN_OUTREACH_TASK_FAILED",
+                  );
+                }
+              }}
+            />
+          )}
           {tab === "audit" && (
             <section className="panel">
               <div className="panel-heading">
@@ -1302,7 +2269,7 @@ export function WorkspaceApp({
                   Tải CSV (được audit)
                 </a>
               </div>
-              <AuditView data={data} />
+              <AuditView data={auditData ?? data} />
             </section>
           )}
         </main>
@@ -1311,6 +2278,11 @@ export function WorkspaceApp({
         Chỉ dùng local/staging với dữ liệu tổng hợp hoặc được phê duyệt. Preview
         import mất khi tiến trình dừng.
       </footer>
+      <UIHealthInspector
+        isOpen={isInspectorOpen}
+        onClose={() => setIsInspectorOpen(false)}
+        activeTab={tab}
+      />
     </div>
   );
 }
@@ -1336,6 +2308,7 @@ function LeadList({
           <thead>
             <tr>
               <th>Doanh nghiệp</th>
+              <th>Đánh giá AI</th>
               <th>Giai đoạn</th>
               <th>Địa bàn</th>
               <th>Liên hệ (đã che)</th>
@@ -1354,6 +2327,35 @@ function LeadList({
                   >
                     {lead.companyName}
                   </button>
+                </td>
+                <td>
+                  {lead.leadScore ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          color: "#fff",
+                          width: "fit-content",
+                          background:
+                            lead.leadScore.tier === "A"
+                              ? "#16a34a"
+                              : lead.leadScore.tier === "B"
+                              ? "#2563eb"
+                              : lead.leadScore.tier === "C"
+                              ? "#d97706"
+                              : "#6b7280",
+                        }}
+                      >
+                        Tier {lead.leadScore.tier} · {lead.leadScore.totalScore}đ
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
                 </td>
                 <td>
                   <span className="stage-pill">{lead.stage}</span>
@@ -1388,6 +2390,7 @@ function LeadDetail({
   onError: (message: string) => void;
   onNotice: (message: string) => void;
 }) {
+  const [quickOutreachBusy, setQuickOutreachBusy] = useState(false);
   const lead = data as {
     id?: string;
     companyName?: string;
@@ -1405,7 +2408,66 @@ function LeadDetail({
       at: string;
       changedFieldNames: readonly string[];
     }[];
+    classification?: {
+      segment: string;
+      recommendedServices: string[];
+      screeningQuestions: string[];
+      suggestedCta: string;
+      suggestionStatus: string;
+    };
+    productMatches?: readonly {
+      serviceId: string;
+      serviceName: string;
+      bundleAvailable: boolean;
+      bundleName?: string;
+      painPointsAddressed: string[];
+      policyStatus: string;
+      requiredConfirmations: string[];
+    }[];
+    leadScore?: {
+      totalScore: number;
+      tier: "A" | "B" | "C" | "D";
+      recommendedProducts: string[];
+      tierExplanation: string;
+      industryScore: number;
+      establishmentScore: number;
+      scaleScore: number;
+      productDemandScore: number;
+      contactInfoScore: number;
+      businessSignalScore: number;
+    };
   } | null;
+
+  async function triggerQuickOutreach() {
+    if (!lead || !lead.id || quickOutreachBusy) return;
+    setQuickOutreachBusy(true);
+    try {
+      await api(
+        "/outreach/batches",
+        jsonInit("POST", {
+          batchName: `Tiếp cận Zalo: ${lead.companyName}`,
+          leadIds: [lead.id],
+          templateCode:
+            lead.classification?.segment === "ACCOUNTING"
+              ? "ZALO_ACCOUNTING_PARTNER_V1"
+              : "ZALO_DNMTL_INTRO_V1",
+          action: "ADD_FRIEND_AND_SEND_MESSAGE",
+          accountId: "zalo-dian-am01",
+        }),
+      );
+      onNotice(
+        `Đã tạo đợt tiếp cận Zalo cho ${lead.companyName}! Chuyển sang tab "Chiến dịch & CTV" để theo dõi.`,
+      );
+    } catch (cause) {
+      onError(
+        cause instanceof Error
+          ? cause.message
+          : "Không thể khởi tạo tiếp cận Zalo.",
+      );
+    } finally {
+      setQuickOutreachBusy(false);
+    }
+  }
   if (!lead || lead.id !== selectedLead)
     return (
       <div className="panel span-two">
@@ -1453,6 +2515,141 @@ function LeadDetail({
           <button className="secondary">Lưu</button>
         </form>
       </div>
+
+      {lead.leadScore && (
+        <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "15px", color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>🎯 AI Lead Scoring (Thang điểm 100)</span>
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "3px 10px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: "#fff",
+                    background:
+                      lead.leadScore.tier === "A"
+                        ? "#16a34a"
+                        : lead.leadScore.tier === "B"
+                        ? "#2563eb"
+                        : lead.leadScore.tier === "C"
+                        ? "#d97706"
+                        : "#6b7280",
+                  }}
+                >
+                  Tier {lead.leadScore.tier} — {lead.leadScore.totalScore}/100 điểm
+                </span>
+              </h3>
+              <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#64748b" }}>
+                {lead.leadScore.tierExplanation}
+              </p>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <span style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
+                {lead.leadScore.totalScore}
+              </span>
+              <span style={{ fontSize: "13px", color: "#94a3b8" }}>/100</span>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", marginBottom: "12px" }}>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Ngành nghề phù hợp</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.industryScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/20đ</span></div>
+            </div>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Thời gian thành lập</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.establishmentScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/15đ</span></div>
+            </div>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Quy mô doanh nghiệp</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.scaleScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/15đ</span></div>
+            </div>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Nhu cầu SP dự kiến</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.productDemandScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/25đ</span></div>
+            </div>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Thông tin liên hệ</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.contactInfoScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/15đ</span></div>
+            </div>
+            <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Tín hiệu kinh doanh</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>{lead.leadScore.businessSignalScore} <span style={{ fontSize: "11px", fontWeight: 400, color: "#94a3b8" }}>/10đ</span></div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: "11px", color: "#64748b", fontStyle: "italic", background: "#f1f5f9", padding: "6px 10px", borderRadius: "4px" }}>
+            💡 Nguyên tắc tính điểm: Thuộc tính thiếu hoặc chưa xác minh nhận 0 điểm, không tự suy diễn cộng điểm.
+          </div>
+        </div>
+      )}
+
+      {lead.classification && (
+        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "14px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontWeight: 600, color: "#166534" }}>Phân loại khách hàng:</span>
+              <span className="badge" style={{ background: "#15803d", color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" }}>
+                {lead.classification.segment}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="primary"
+              disabled={quickOutreachBusy}
+              onClick={triggerQuickOutreach}
+              style={{ fontSize: "13px", padding: "6px 12px" }}
+            >
+              {quickOutreachBusy ? "Đang tạo..." : "Khởi tạo tiếp cận Zalo ngay"}
+            </button>
+          </div>
+          <p style={{ margin: "4px 0", fontSize: "13px", color: "#374151" }}>
+            <strong>Gợi ý tiếp cận (CTA):</strong> {lead.classification.suggestedCta}
+          </p>
+          {lead.classification.screeningQuestions.length > 0 && (
+            <div style={{ marginTop: "8px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#4b5563" }}>Câu hỏi gợi ý khi tư vấn:</span>
+              <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: "12px", color: "#4b5563" }}>
+                {lead.classification.screeningQuestions.map((q, idx) => (
+                  <li key={idx}>{q}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {lead.productMatches && lead.productMatches.length > 0 && (
+        <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "14px", marginBottom: "16px" }}>
+          <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#1e293b" }}>
+            Đề xuất giải pháp Viettel phù hợp ({lead.productMatches.length} dịch vụ):
+          </h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "10px" }}>
+            {lead.productMatches.map((prod) => (
+              <div key={prod.serviceId} style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "10px" }}>
+                <div style={{ fontWeight: 600, fontSize: "13px", color: "#0f172a" }}>{prod.serviceName}</div>
+                {prod.bundleName && (
+                  <span style={{ fontSize: "11px", color: "#0284c7", background: "#e0f2fe", padding: "2px 6px", borderRadius: "3px", display: "inline-block", marginTop: "4px" }}>
+                    {prod.bundleName}
+                  </span>
+                )}
+                {prod.painPointsAddressed.length > 0 && (
+                  <ul style={{ margin: "6px 0 0 16px", padding: 0, fontSize: "11px", color: "#64748b" }}>
+                    {prod.painPointsAddressed.map((p, idx) => (
+                      <li key={idx}>{p}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="details-grid">
         <section>
           <h3>Liên hệ</h3>
@@ -1578,6 +2775,48 @@ function ImportPanel({
         Chỉ .xlsx, tối đa 5 MiB. File được xử lý trong request; không lưu
         workbook thô. Preview PII chỉ ở RAM tối đa 30 phút.
       </p>
+      <div
+        className="template-download-box"
+        style={{
+          background: "var(--color-surface, #f8fafc)",
+          padding: "12px 16px",
+          borderRadius: "8px",
+          border: "1px solid var(--color-border, #e2e8f0)",
+          marginBottom: "16px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "8px",
+          }}
+        >
+          <div>
+            <strong>Mẫu chuẩn hóa Doanh nghiệp Mới Thành Lập (DNMTL):</strong>
+            <p className="muted" style={{ margin: "4px 0 0 0", fontSize: "13px" }}>
+              File mẫu chuẩn hóa 5.003 doanh nghiệp Dĩ An / Bình Dương (tuân thủ Nghị định 13/2023/NĐ-CP đã lọc bỏ CMND/CCCD).
+            </p>
+          </div>
+          <a
+            href="/api/v1/import-template"
+            download="DNMTL_T7_2026_Standard_Template.xlsx"
+            className="secondary"
+            style={{
+              padding: "6px 14px",
+              borderRadius: "6px",
+              textDecoration: "none",
+              fontSize: "13px",
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+            }}
+          >
+            📥 Tải file mẫu (.xlsx - 5.003 DN)
+          </a>
+        </div>
+      </div>
       <form className="upload-form" onSubmit={onUpload}>
         <label>
           Workbook (.xlsx)
@@ -1679,8 +2918,8 @@ function ImportPanel({
               Hết hạn:{" "}
               {state.expiresAt
                 ? new Date(state.expiresAt).toLocaleTimeString("vi-VN", {
-                    timeZone: "Asia/Ho_Chi_Minh",
-                  })
+                  timeZone: "Asia/Ho_Chi_Minh",
+                })
                 : "—"}
             </span>
           </div>
@@ -1834,8 +3073,26 @@ function TodayDashboard({
   onOpenPlanner: () => void;
 }) {
   const tasks = data as readonly TaskCard[] | null;
-  if (!tasks)
-    return <p className="empty">Đang tải tác vụ trong phạm vi được cấp.</p>;
+  if (!tasks) {
+    return (
+      <section className="panel-grid" aria-busy="true">
+        <div className="panel" style={{ minHeight: 200 }}>
+          <div className="panel-heading">
+            <h2>Đến hạn hôm nay</h2>
+            <span className="muted">Đang tải…</span>
+          </div>
+          <p className="empty">Đang tải tác vụ trong phạm vi được cấp.</p>
+        </div>
+        <div className="panel" style={{ minHeight: 200 }}>
+          <div className="panel-heading">
+            <h2>Quá hạn</h2>
+            <span className="muted">Đang tải…</span>
+          </div>
+          <p className="empty">Đang kiểm tra…</p>
+        </div>
+      </section>
+    );
+  }
   const today = hcmToday();
   const dueToday = tasks.filter((task) => hcmDate(task.dueAt) === today);
   const overdue = tasks.filter((task) => {

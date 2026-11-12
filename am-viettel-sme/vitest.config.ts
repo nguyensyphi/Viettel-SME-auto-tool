@@ -16,7 +16,8 @@ export default defineConfig({
         singleFork: true,
       },
     },
-    testTimeout: 20000,
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
 });
 

@@ -178,6 +178,21 @@ model Workspace {
   lockedTimeBlocks    LockedTimeBlock[]
   auditEvents         AuditEvent[]
   retentionPolicies   DataRetentionPolicy[]
+  googleConnections   GoogleConnection[]
+  contentPosts        ContentPost[]
+  mediaAssets         MediaAsset[]
+  contentApprovals    ContentApproval[]
+  socialAccounts      SocialAccount[]
+  publishingCampaigns PublishingCampaign[]
+  publishingSchedules PublishingSchedule[]
+  publishingJobs      PublishingJob[]
+  publishingResults   PublishingResult[]
+  communityGroups     CommunityGroup[]
+  groupCampaigns      GroupCampaign[]
+  groupPostJobs       GroupPostJob[]
+  partnerLeads        PartnerLead[]
+  partnerReferrals    PartnerReferral[]
+  partnerConversions  PartnerConversion[]
 }
 
 model User {
@@ -613,3 +628,468 @@ model AuthSession {
   @@index([workspaceId, userId, expiresAt])
   @@index([workspaceId, revokedAt, expiresAt])
 }
+
+enum GoogleConnectionStatus {
+  CONNECTED
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
+enum DriveFolderType {
+  ROOT
+  CONTENT
+  MEDIA
+  ARCHIVE
+  OTHER
+}
+
+enum GoogleSyncStatus {
+  SUCCESS
+  FAILED
+  IN_PROGRESS
+}
+
+model GoogleConnection {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  workspaceId           String                 @db.Uuid
+  provider              String                 @default("GOOGLE")
+  accountEmail          String
+  scopes                String[]               @default([])
+  status                GoogleConnectionStatus @default(CONNECTED)
+  encryptedRefreshToken String?
+  expiresAt             DateTime?              @db.Timestamptz(6)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace             Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folders               GoogleDriveFolder[]
+  syncLogs              GoogleSyncLog[]
+  documents             GoogleDocument[]
+  mediaAssets           MediaAsset[]
+
+  @@index([workspaceId, status])
+}
+
+model GoogleDriveFolder {
+  id            String          @id @default(uuid()) @db.Uuid
+  connectionId  String          @db.Uuid
+  driveFolderId String
+  folderName    String
+  folderType    DriveFolderType @default(OTHER)
+  pathHint      String?
+  registeredAt  DateTime        @default(now()) @db.Timestamptz(6)
+  lastSyncedAt  DateTime?       @db.Timestamptz(6)
+  connection    GoogleConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, driveFolderId])
+  @@index([connectionId])
+}
+
+model GoogleSyncLog {
+  id           String           @id @default(uuid()) @db.Uuid
+  connectionId String           @db.Uuid
+  entityId     String
+  syncType     String
+  syncStatus   GoogleSyncStatus
+  itemsSynced  Int              @default(0)
+  errorMessage String?
+  createdAt    DateTime         @default(now()) @db.Timestamptz(6)
+  connection   GoogleConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+}
+
+model GoogleDocument {
+  id           String           @id @default(uuid()) @db.Uuid
+  connectionId String           @db.Uuid
+  documentId   String
+  name         String
+  revisionId   String?
+  contentHash  String?
+  postCount    Int              @default(0)
+  modifiedAt   DateTime?        @db.Timestamptz(6)
+  syncedAt     DateTime         @default(now()) @db.Timestamptz(6)
+  connection   GoogleConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  posts        ContentPost[]
+
+  @@unique([connectionId, documentId])
+  @@index([connectionId])
+}
+
+model ContentPost {
+  id             String           @id @default(uuid()) @db.Uuid
+  workspaceId    String           @db.Uuid
+  documentId     String?          @db.Uuid
+  postCode       String
+  title          String
+  body           String
+  topicCode      String
+  targetAudience String           @default("BUSINESS_OWNER")
+  platforms      String[]         @default([])
+  status         String           @default("DRAFT")
+  priority       String           @default("NORMAL")
+  mediaHint      String?
+  hashtags       String[]         @default([])
+  version        Int              @default(1)
+  contentHash    String
+  validFrom      DateTime?        @db.Timestamptz(6)
+  validUntil     DateTime?        @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document       GoogleDocument?  @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  versions       ContentVersion[]
+  mediaLinks     ContentMediaLink[]
+  approvals      ContentApproval[]
+  schedules      PublishingSchedule[]
+  jobs           PublishingJob[]
+  results        PublishingResult[]
+
+  @@unique([workspaceId, postCode])
+  @@index([workspaceId, status])
+  @@index([workspaceId, topicCode])
+}
+
+model ContentVersion {
+  id          String      @id @default(uuid()) @db.Uuid
+  contentId   String      @db.Uuid
+  version     Int
+  contentHash String
+  title       String
+  body        String
+  topicCode   String
+  hashtags    String[]    @default([])
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  content     ContentPost @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, version])
+  @@index([contentId])
+}
+
+model MediaAsset {
+  id            String             @id @default(uuid()) @db.Uuid
+  workspaceId   String             @db.Uuid
+  connectionId  String?            @db.Uuid
+  driveFileId   String
+  fileName      String
+  mimeType      String
+  sizeBytes     Int                @default(0)
+  checksum      String
+  topicCode     String
+  postCodeHint  String?
+  platforms     String[]           @default([])
+  status        String             @default("PENDING")
+  version       Int                @default(1)
+  isSharedMedia Boolean            @default(false)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection    GoogleConnection?  @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  versions      MediaVersion[]
+  contentLinks  ContentMediaLink[]
+
+  @@unique([workspaceId, driveFileId])
+  @@index([workspaceId, topicCode])
+  @@index([workspaceId, checksum])
+}
+
+model MediaVersion {
+  id        String     @id @default(uuid()) @db.Uuid
+  mediaId   String     @db.Uuid
+  version   Int
+  checksum  String
+  sizeBytes Int        @default(0)
+  createdAt DateTime   @default(now()) @db.Timestamptz(6)
+  media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaId, version])
+  @@index([mediaId])
+}
+
+model ContentMediaLink {
+  id          String      @id @default(uuid()) @db.Uuid
+  contentId   String      @db.Uuid
+  mediaId     String      @db.Uuid
+  position    Int         @default(0)
+  matchMethod String      @default("TOPIC")
+  matchScore  Float       @default(1.0)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  content     ContentPost @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  media       MediaAsset  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, mediaId])
+  @@index([contentId])
+}
+
+model ContentApproval {
+  id                String      @id @default(uuid()) @db.Uuid
+  workspaceId       String      @db.Uuid
+  contentId         String      @db.Uuid
+  contentVersion    Int
+  mediaVersion      Int?
+  approvedBy        String
+  status            String
+  approvedPlatforms String[]    @default([])
+  notes             String?
+  createdAt         DateTime    @default(now()) @db.Timestamptz(6)
+  workspace         Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  content           ContentPost @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([contentId, createdAt])
+}
+
+model SocialAccount {
+  id                 String               @id @default(uuid()) @db.Uuid
+  workspaceId        String               @db.Uuid
+  accountCode        String
+  platform           String
+  displayName        String
+  ownerUserId        String
+  profileDir         String
+  assignedTopics     String[]             @default([])
+  maxPostsPerDay     Int                  @default(2)
+  minIntervalMinutes Int                  @default(180)
+  preferredWindows   String[]             @default([])
+  status             String               @default("NEEDS_AUTH")
+  lastSessionCheckAt DateTime?            @db.Timestamptz(6)
+  createdAt          DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schedules          PublishingSchedule[]
+  jobs               PublishingJob[]
+  results            PublishingResult[]
+
+  @@unique([workspaceId, accountCode])
+  @@index([workspaceId, platform, status])
+}
+
+model PublishingCampaign {
+  id          String               @id @default(uuid()) @db.Uuid
+  workspaceId String               @db.Uuid
+  name        String
+  topicCodes  String[]             @default([])
+  accountIds  String[]             @default([])
+  startDate   DateTime?            @db.Timestamptz(6)
+  endDate     DateTime?            @db.Timestamptz(6)
+  status      String               @default("ACTIVE")
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace   Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schedules   PublishingSchedule[]
+
+  @@index([workspaceId, status])
+}
+
+model PublishingSchedule {
+  id          String              @id @default(uuid()) @db.Uuid
+  workspaceId String              @db.Uuid
+  campaignId  String?             @db.Uuid
+  contentId   String              @db.Uuid
+  accountId   String              @db.Uuid
+  platform    String
+  scheduledAt DateTime            @db.Timestamptz(6)
+  publishMode String              @default("ASSISTED_PUBLISH")
+  status      String              @default("SCHEDULED")
+  createdAt   DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign    PublishingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  content     ContentPost         @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  account     SocialAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  jobs        PublishingJob[]
+
+  @@index([workspaceId, accountId, scheduledAt])
+}
+
+model PublishingJob {
+  id             String              @id @default(uuid()) @db.Uuid
+  workspaceId    String              @db.Uuid
+  scheduleId     String?             @db.Uuid
+  contentId      String              @db.Uuid
+  accountId      String              @db.Uuid
+  platform       String
+  publishMode    String              @default("ASSISTED_PUBLISH")
+  scheduledAt    DateTime            @db.Timestamptz(6)
+  idempotencyKey String
+  status         String              @default("QUEUED")
+  errorCode      String?
+  errorMessage   String?
+  retryCount     Int                 @default(0)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace      Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  schedule       PublishingSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  content        ContentPost         @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  account        SocialAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  steps          PublishingJobStep[]
+  result         PublishingResult?
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, accountId, status])
+}
+
+model PublishingJobStep {
+  id        String        @id @default(uuid()) @db.Uuid
+  jobId     String        @db.Uuid
+  stepName  String
+  status    String
+  details   String?
+  createdAt DateTime      @default(now()) @db.Timestamptz(6)
+  job       PublishingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+model PublishingResult {
+  id             String        @id @default(uuid()) @db.Uuid
+  jobId          String        @unique @db.Uuid
+  workspaceId    String        @db.Uuid
+  contentId      String        @db.Uuid
+  accountId      String        @db.Uuid
+  platform       String
+  status         String
+  publishedUrl   String?
+  screenshotPath String?
+  confirmedBy    String?
+  publishedAt    DateTime      @default(now()) @db.Timestamptz(6)
+  job            PublishingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  content        ContentPost   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  account        SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, accountId, publishedAt])
+}
+
+model CommunityGroup {
+  id                   String         @id @default(uuid()) @db.Uuid
+  workspaceId          String         @db.Uuid
+  groupCode            String
+  platform             String
+  name                 String
+  url                  String
+  category             String
+  postingPermission    String         @default("ALLOWED")
+  minHoursBetweenPosts Int            @default(24)
+  active               Boolean        @default(true)
+  lastPostedAt         DateTime?      @db.Timestamptz(6)
+  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace            Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  jobs                 GroupPostJob[]
+
+  @@unique([workspaceId, groupCode])
+  @@index([workspaceId, category, active])
+}
+
+model GroupCampaign {
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @db.Uuid
+  campaignCode     String
+  name             String
+  campaignType     String
+  targetCategories String[]       @default([])
+  contentTemplate  String
+  mediaPaths       String[]       @default([])
+  status           String         @default("DRAFT")
+  approvedByAmId   String?
+  approvedAt       DateTime?      @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  jobs             GroupPostJob[]
+
+  @@unique([workspaceId, campaignCode])
+  @@index([workspaceId, status])
+}
+
+model GroupPostJob {
+  id             String         @id @default(uuid()) @db.Uuid
+  workspaceId    String         @db.Uuid
+  campaignId     String         @db.Uuid
+  groupId        String         @db.Uuid
+  accountCode    String
+  idempotencyKey String
+  lockKey        String
+  status         String         @default("QUEUED")
+  postUrl        String?
+  screenshotPath String?
+  errorMessage   String?
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign       GroupCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group          CommunityGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, campaignId, status])
+}
+
+model PartnerLead {
+  id            String              @id @default(uuid()) @db.Uuid
+  workspaceId   String              @db.Uuid
+  partnerCode   String
+  fullName      String
+  phoneMasked   String
+  phoneHash     String
+  profession    String
+  stage         String              @default("NEW")
+  sourceGroupId String?
+  notes         String?
+  updatedByAmId String?
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  referrals     PartnerReferral[]
+  conversions   PartnerConversion[]
+
+  @@unique([workspaceId, partnerCode])
+  @@unique([workspaceId, phoneHash])
+  @@index([workspaceId, stage])
+}
+
+model PartnerReferral {
+  id                String             @id @default(uuid()) @db.Uuid
+  workspaceId       String             @db.Uuid
+  referralCode      String
+  partnerId         String             @db.Uuid
+  companyName       String
+  normalizedTaxCode String
+  productCodes      String[]           @default([])
+  status            String             @default("REFERRED")
+  createdAt         DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  partner           PartnerLead        @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  conversion        PartnerConversion?
+
+  @@unique([workspaceId, referralCode])
+  @@unique([workspaceId, normalizedTaxCode])
+  @@index([workspaceId, partnerId, status])
+}
+
+model PartnerConversion {
+  id                              String          @id @default(uuid()) @db.Uuid
+  workspaceId                     String          @db.Uuid
+  conversionCode                  String
+  referralId                      String          @unique @db.Uuid
+  partnerId                       String          @db.Uuid
+  contractRevenueVnd              Int
+  commissionRatePercent           Float
+  commissionAmountVnd             Int
+  commissionPolicyConfirmedByAmId String
+  policyReferenceNote             String?
+  payoutStatus                    String          @default("APPROVED_PENDING_PAYOUT")
+  payoutReference                 String?
+  paidByOperatorId                String?
+  paidAt                          DateTime?       @db.Timestamptz(6)
+  createdAt                       DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt                       DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+  workspace                       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  referral                        PartnerReferral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  partner                         PartnerLead     @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, conversionCode])
+  @@index([workspaceId, partnerId, payoutStatus])
+}
+
+

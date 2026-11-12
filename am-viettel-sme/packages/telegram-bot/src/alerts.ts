@@ -69,6 +69,38 @@ export interface TelegramAlertDispatcherOptions {
   transport: TelegramTransport;
 }
 
+export type PublishingNotificationEvent =
+  | "SESSION_EXPIRED"
+  | "WAITING_CONFIRMATION"
+  | "PUBLISHED"
+  | "JOB_FAILED";
+
+export interface PublishingNotificationInput {
+  readonly event: PublishingNotificationEvent;
+  readonly accountCode: string;
+  readonly platform: "ZALO" | "FACEBOOK";
+  readonly postCode?: string | undefined;
+  readonly postTitle?: string | undefined;
+  readonly reason?: string | undefined;
+  readonly dashboardUrl?: string | undefined;
+}
+
+export interface MorningDigestItem {
+  readonly timeLabel: string;
+  readonly accountCode: string;
+  readonly platform: "ZALO" | "FACEBOOK";
+  readonly postCode: string;
+  readonly topicCode: string;
+}
+
+export interface MorningScheduleDigestInput {
+  readonly dateLabel: string;
+  readonly scheduledCount: number;
+  readonly waitingConfirmationCount: number;
+  readonly expiredAccountsCount: number;
+  readonly items: readonly MorningDigestItem[];
+}
+
 export class TelegramAlertDispatcher {
   private readonly adminChatIds: readonly string[];
   private readonly transport: TelegramTransport;
@@ -86,6 +118,41 @@ export class TelegramAlertDispatcher {
       ...(alert.accountId ? [`Account: ${alert.accountId}`] : []),
       ...(alert.platform ? [`Platform: ${alert.platform}`] : []),
       `Detail: ${alert.detail}`,
+    ];
+    const message = lines.join("\n");
+    assertSafeTelegramText(message);
+
+    for (const chatId of this.adminChatIds) {
+      await this.transport.sendMessage(chatId, message);
+    }
+  }
+
+  async sendPublishingNotification(input: PublishingNotificationInput): Promise<void> {
+    const lines = [
+      `[MOD-PB-002] ${input.event}`,
+      `Account: ${input.accountCode} (${input.platform})`,
+      ...(input.postCode ? [`Post: ${input.postCode}`] : []),
+      ...(input.postTitle ? [`Title: ${input.postTitle}`] : []),
+      ...(input.reason ? [`Reason: ${input.reason}`] : []),
+      ...(input.dashboardUrl ? [`Dashboard: ${input.dashboardUrl}`] : []),
+    ];
+    const message = lines.join("\n");
+    assertSafeTelegramText(message);
+
+    for (const chatId of this.adminChatIds) {
+      await this.transport.sendMessage(chatId, message);
+    }
+  }
+
+  async sendMorningScheduleDigest(input: MorningScheduleDigestInput): Promise<void> {
+    const itemLines = input.items.map(
+      (item) =>
+        `- ${item.timeLabel} | ${item.accountCode} (${item.platform}) | ${item.postCode} [${item.topicCode}]`,
+    );
+    const lines = [
+      `=== LỊCH ĐĂNG BÀI NGÀY ${input.dateLabel} ===`,
+      `Scheduled: ${input.scheduledCount} | Chờ xác nhận: ${input.waitingConfirmationCount} | Cần đăng nhập lại: ${input.expiredAccountsCount}`,
+      ...itemLines,
     ];
     const message = lines.join("\n");
     assertSafeTelegramText(message);

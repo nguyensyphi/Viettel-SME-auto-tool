@@ -98,6 +98,31 @@ export const MESSAGE_TEMPLATES: readonly MessageTemplate[] = [
       "[Nếu không muốn nhận] Dạ em ghi nhận và sẽ ngừng liên hệ. Em cảm ơn {contactGreeting}.\n" +
       "[Câu hỏi sàng lọc] Hiện doanh nghiệp đang xử lý nghiệp vụ liên quan bằng giải pháp nào ạ?",
   },
+  {
+    templateId: "ZALO_DNMTL_INTRO_V1",
+    channel: "ZALO",
+    purpose: "Chào doanh nghiệp mới thành lập (DNMTL): Chữ ký số Viettel-CA, Hóa đơn điện tử S-Invoice",
+    approvalStatus: "DRAFT_PENDING_COMPLIANCE",
+    body:
+      "Em chào {contactGreeting}, em là {amName} từ Viettel.\n\n" +
+      "Em thấy {companyName} mới thành lập nên muốn kết nối để hỗ trợ doanh nghiệp các giải pháp số hóa như chữ ký số, hóa đơn điện tử và hợp đồng điện tử.\n\n" +
+      "Nếu anh/chị đang cần tìm hiểu hoặc triển khai các dịch vụ này, em có thể gửi thông tin và tư vấn giải pháp phù hợp với nhu cầu của công ty mình ạ.\n\n" +
+      "Rất mong được kết nối và hỗ trợ anh/chị!\n" +
+      "Liên hệ AM Viettel: {amPhone}\n\n" +
+      "(Nếu không muốn nhận tin nhắn, vui lòng nhắn TỪ CHỐI)",
+  },
+  {
+    templateId: "ZALO_ACCOUNTING_PARTNER_V1",
+    channel: "ZALO",
+    purpose: "Mời hợp tác đối tác kế toán, thuế và CTV giới thiệu dịch vụ Viettel SME",
+    approvalStatus: "DRAFT_PENDING_COMPLIANCE",
+    body:
+      "Em chào {contactGreeting}, em là {amName} từ Viettel.\n\n" +
+      "Bên em đang triển khai các giải pháp chữ ký số và hóa đơn điện tử dành cho doanh nghiệp, đồng thời có chính sách hợp tác dành cho các đơn vị kế toán và đối tác giới thiệu khách hàng.\n\n" +
+      "Em muốn kết nối để gửi anh/chị thông tin sản phẩm và chính sách hợp tác cụ thể cho {companyName}. Nếu phù hợp, hy vọng hai bên có thể cùng phối hợp lâu dài ạ.\n\n" +
+      "Liên hệ AM Viettel: {amPhone}\n\n" +
+      "(Nếu không muốn nhận tin nhắn, vui lòng nhắn TỪ CHỐI)",
+  },
 ];
 
 const PLACEHOLDER = /\{(\w+)\}/g;
@@ -118,9 +143,15 @@ export function defaultTemplateFor(channel: TemplateChannel): MessageTemplate {
   return template;
 }
 
-export function renderTemplate(template: MessageTemplate, vars: TemplateVariables): string {
+export function renderTemplate(
+  template: MessageTemplate,
+  vars: TemplateVariables & { companyName?: string },
+): string {
   return template.body.replace(PLACEHOLDER, (_match, key: string) => {
-    const value = (vars as unknown as Record<string, string | undefined>)[key];
+    const map = vars as unknown as Record<string, string | undefined>;
+    let value = map[key];
+    if (key === "companyName" && !value) value = map.businessName;
+    if (key === "businessName" && !value) value = map.companyName;
     if (typeof value !== "string" || value.trim().length === 0) {
       throw new Error(`Missing template variable: ${key}`);
     }

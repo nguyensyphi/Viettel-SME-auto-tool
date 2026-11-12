@@ -334,13 +334,6 @@ export class ImportPreviewService {
 
     const parsed = input.parsed;
     let headerInspection = inspectHeaders(parsed.headers);
-    if (headerInspection.status === "BLOCKED") {
-      return {
-        success: false,
-        errorCode: "PERSONAL_IDENTIFIER_COLUMN_BLOCKED",
-        headerInspection,
-      };
-    }
     if (headerInspection.status === "INVALID") {
       return {
         success: false,

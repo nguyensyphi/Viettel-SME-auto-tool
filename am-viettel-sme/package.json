@@ -10,6 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:ui-e2e": "tsx scripts/run-ui-smoke.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format:check": "prettier --check .",

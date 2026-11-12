@@ -113,3 +113,52 @@ export function generateOutreachMessage(
     approvalStatus: template.approvalStatus,
   };
 }
+
+export interface ZaloOutreachRenderInput {
+  templateCode: "ZALO_DNMTL_INTRO_V1" | "ZALO_ACCOUNTING_PARTNER_V1" | string;
+  variables: {
+    companyName: string;
+    representativeName?: string | undefined;
+    amName: string;
+    amPhone: string;
+    suggestedProducts?: readonly string[] | undefined;
+    province?: string | undefined;
+  };
+}
+
+const SENSITIVE_PII_PATTERN =
+  /(?:\b(?:cccd|cmnd|căn\s*cước|chứng\s*minh)\b[^\n\r]{0,25}\b\d{9,12}\b|\b0\d{11}\b|\b(?:sn|sinh\s*ngày|ngày\s*sinh|dob|birthdate)\b[^\n\r]{0,20}\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b)/iu;
+
+export function renderZaloOutreachMessage(
+  input: ZaloOutreachRenderInput,
+): { content: string; templateCode: string } {
+  const combinedText = `${input.variables.companyName} ${input.variables.representativeName ?? ""} ${input.variables.amName}`;
+  if (SENSITIVE_PII_PATTERN.test(combinedText)) {
+    throw new Error(
+      "PII_DETECTED: Outreach message inputs must never embed CCCD/CMND personal identifiers",
+    );
+  }
+
+  const template = getTemplate(input.templateCode);
+  const greeting = input.variables.representativeName?.trim() || "anh/chị";
+
+  let content = template.body
+    .replace(/\{contactGreeting\}/g, greeting)
+    .replace(/\{companyName\}/g, input.variables.companyName.trim())
+    .replace(/\{amName\}/g, input.variables.amName.trim())
+    .replace(/\{amPhone\}/g, input.variables.amPhone.trim())
+    .replace(/\{province\}/g, input.variables.province?.trim() ?? "TP.HCM");
+
+  if (input.variables.suggestedProducts && input.variables.suggestedProducts.length > 0) {
+    content = content.replace(
+      /\{product_name\}/g,
+      input.variables.suggestedProducts.join(", "),
+    );
+  }
+
+  return {
+    content,
+    templateCode: template.templateId,
+  };
+}
+

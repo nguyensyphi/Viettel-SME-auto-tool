@@ -108,6 +108,37 @@ const sourceSet: ReadonlySet<string> = new Set(LEAD_SOURCE_TYPES);
 const lawfulBasisSet: ReadonlySet<string> = new Set(LAWFUL_CONTACT_BASES);
 const consentStatusSet: ReadonlySet<string> = new Set(CONSENT_STATUSES);
 
+const HEADER_ALIASES: Readonly<Record<string, LeadImportField>> = {
+  "doanh nghiệp": "company_name",
+  "tên doanh nghiệp": "company_name",
+  "tên công ty": "company_name",
+  "công ty": "company_name",
+  "khách hàng": "company_name",
+  "sđt": "phone",
+  "sdt": "phone",
+  "số điện thoại": "phone",
+  "điện thoại": "phone",
+  "hotline": "phone",
+  "di động": "phone",
+  "email": "email",
+  "thư điện tử": "email",
+  "mail": "email",
+  "ngành nghề kinh doanh chính": "industry",
+  "ngành nghề": "industry",
+  "lĩnh vực": "industry",
+  "quận/huyện": "district",
+  "quận": "district",
+  "huyện": "district",
+  "địa bàn": "district",
+  "phường/xã": "district",
+  "website": "source_url",
+  "trang web": "source_url",
+  "người đại diện": "contact_name",
+  "đại diện pháp luật": "contact_name",
+  "người liên hệ": "contact_name",
+  "ghi chú": "notes",
+};
+
 export interface ColumnMappingEntry {
   readonly sourceColumnIndex: number;
   readonly targetField: LeadImportField;
@@ -311,6 +342,17 @@ export function inspectHeaders(headers: readonly unknown[]): HeaderInspection {
       return;
     }
 
+    const aliasTarget = HEADER_ALIASES[normalized];
+    if (aliasTarget) {
+      if (!candidateMap.some((entry) => entry.targetField === aliasTarget)) {
+        candidateMap.push({
+          sourceColumnIndex,
+          targetField: aliasTarget,
+        });
+        return;
+      }
+    }
+
     const classification = classifyUnknownHeader(rawHeader);
     quarantinedColumns.push({ sourceColumnIndex, classification });
     if (classification === "PERSONAL_IDENTIFIER") {
@@ -329,11 +371,9 @@ export function inspectHeaders(headers: readonly unknown[]): HeaderInspection {
   const status: MappingStatus =
     errors.length > 0
       ? "INVALID"
-      : hasPersonalIdentifierColumn
-        ? "BLOCKED"
-        : quarantinedColumns.length > 0
-          ? "NEEDS_REVIEW"
-          : "READY";
+      : quarantinedColumns.length > 0
+        ? "NEEDS_REVIEW"
+        : "READY";
 
   return {
     status,

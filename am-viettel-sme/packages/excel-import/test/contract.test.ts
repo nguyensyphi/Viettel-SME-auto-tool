@@ -64,6 +64,97 @@ describe("P0.3a Excel lead import contract", () => {
     }
   });
 
+  it("recognizes standard Vietnamese business headers (DOANH NGHIỆP, SĐT, EMAIL)", () => {
+    const vnHeaders = ["DOANH NGHIỆP", "SĐT", "EMAIL", "NGÀNH NGHỀ", "QUẬN/HUYỆN"];
+    const inspection = inspectHeaders(vnHeaders);
+    expect(inspection.status).toBe("READY");
+    expect(inspection.columnMap).toEqual([
+      { sourceColumnIndex: 0, targetField: "company_name" },
+      { sourceColumnIndex: 1, targetField: "phone" },
+      { sourceColumnIndex: 2, targetField: "email" },
+      { sourceColumnIndex: 3, targetField: "industry" },
+      { sourceColumnIndex: 4, targetField: "district" },
+    ]);
+  });
+
+  it("does not duplicate target fields when multiple columns match the same alias", () => {
+    const vnHeaders = [
+      "DOANH NGHIỆP",
+      "SĐT",
+      "QUẬN/HUYỆN",
+      "PHƯỜNG/XÃ",
+    ];
+    const inspection = inspectHeaders(vnHeaders);
+    expect(inspection.status).toBe("NEEDS_REVIEW");
+    expect(inspection.errors).toHaveLength(0);
+    expect(inspection.columnMap).toEqual([
+      { sourceColumnIndex: 0, targetField: "company_name" },
+      { sourceColumnIndex: 1, targetField: "phone" },
+      { sourceColumnIndex: 2, targetField: "district" },
+    ]);
+  });
+
+  it("blocks real-world exports containing CMND/NGÀY CẤP/NƠI CẤP per Decree 13", () => {
+    const rawExportHeaders = [
+      "MST",
+      "DOANH NGHIỆP",
+      "SĐT",
+      "EMAIL",
+      "WEBSITE",
+      "NGÀNH NGHỀ KINH DOANH CHÍNH",
+      "VỐN ĐIỀU LỆ",
+      "TÊN TỈNH/THÀNH PHỐ",
+      "MÃ TỈNH/THÀNH PHỐ",
+      "QUẬN/HUYỆN",
+      "PHƯỜNG/XÃ",
+      "ĐỊA CHỈ",
+      "NGÀY THÀNH LẬP",
+      "NGƯỜI ĐẠI DIỆN",
+      "CHỨC VỤ",
+      "CMND",
+      "NGÀY CẤP",
+      "NƠI CẤP",
+      "GHI CHÚ",
+    ];
+    const inspection = inspectHeaders(rawExportHeaders);
+    expect(inspection.status).toBe("NEEDS_REVIEW");
+    expect(inspection.warnings.filter((w) => w.code === "PERSONAL_IDENTIFIER_COLUMN_BLOCKED")).toHaveLength(3);
+  });
+
+  it("permits sanitized DNMTL export without personal identifiers", () => {
+    const sanitizedExportHeaders = [
+      "MST",
+      "DOANH NGHIỆP",
+      "SĐT",
+      "EMAIL",
+      "WEBSITE",
+      "NGÀNH NGHỀ KINH DOANH CHÍNH",
+      "VỐN ĐIỀU LỆ",
+      "TÊN TỈNH/THÀNH PHỐ",
+      "MÃ TỈNH/THÀNH PHỐ",
+      "QUẬN/HUYỆN",
+      "PHƯỜNG/XÃ",
+      "ĐỊA CHỈ",
+      "NGÀY THÀNH LẬP",
+      "NGƯỜI ĐẠI DIỆN",
+      "CHỨC VỤ",
+      "GHI CHÚ",
+    ];
+    const inspection = inspectHeaders(sanitizedExportHeaders);
+    expect(inspection.status).toBe("NEEDS_REVIEW");
+    expect(inspection.errors).toHaveLength(0);
+    expect(inspection.columnMap).toEqual([
+      { sourceColumnIndex: 1, targetField: "company_name" },
+      { sourceColumnIndex: 2, targetField: "phone" },
+      { sourceColumnIndex: 3, targetField: "email" },
+      { sourceColumnIndex: 4, targetField: "source_url" },
+      { sourceColumnIndex: 5, targetField: "industry" },
+      { sourceColumnIndex: 9, targetField: "district" },
+      { sourceColumnIndex: 13, targetField: "contact_name" },
+      { sourceColumnIndex: 15, targetField: "notes" },
+    ]);
+  });
+
   it("rejects a header set without the required company_name column", () => {
     const inspection = inspectHeaders(
       expectedHeaders.filter((header) => header !== "company_name"),
@@ -111,7 +202,7 @@ describe("P0.3a Excel lead import contract", () => {
     (sensitiveHeader) => {
       const headers = [...expectedHeaders, sensitiveHeader];
       const inspection = inspectHeaders(headers);
-      expect(inspection.status).toBe("BLOCKED");
+      expect(inspection.status).toBe("NEEDS_REVIEW");
       expect(inspection.columnMap).toHaveLength(expectedHeaders.length);
       expect(inspection.warnings.map((issue) => issue.code)).toContain(
         "PERSONAL_IDENTIFIER_COLUMN_BLOCKED",

@@ -450,6 +450,10 @@ Giải pháp chữ ký số doanh nghiệp mới thành lập tại Bình Dươn
     expect(await screen.findByText("Tuyển CTV Kế Toán Dĩ An")).toBeTruthy();
     expect(screen.getByText("Trần Thị Minh")).toBeTruthy();
     expect(screen.getByText("********78")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Auto Poster Facebook" }));
+    expect(await screen.findByText("Kho Bài Viết Mẫu (Master Posts)")).toBeTruthy();
+    expect(screen.getByText("Danh Sách Nhóm Mục Tiêu (Master Groups)")).toBeTruthy();
   });
 
   it("surfaces 500/403 API errors on Phase 2-4 tabs instead of swallowing them and POSTs QR login & post approval actions", async () => {

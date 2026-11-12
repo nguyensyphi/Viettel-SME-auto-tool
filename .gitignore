@@ -18,8 +18,12 @@ playwright-report/
 **/playwright-report/
 test-results/
 **/test-results/
-storage/browser_profiles/
-**/storage/browser_profiles/
+storage/
+**/storage/
+
+# FB Auto Poster Local Sessions, Python Tools & Cookies
+fb-auto-poster/
+**/fb-auto-poster/
 
 # Environment & Secrets
 .env

@@ -56,6 +56,7 @@ export interface BuildDispatchJobsInput {
   campaignId: string;
   accountId: string;
   dispatchDate: Date;
+  targetGroupIds?: readonly string[] | undefined;
 }
 
 export interface BuildDispatchJobsResult {
@@ -191,9 +192,14 @@ export class CampaignManager {
       );
     }
 
-    const candidateGroups = this.groupManager.listGroups({
+    let candidateGroups = this.groupManager.listGroups({
       categories: campaign.targetCategories,
     });
+
+    if (input.targetGroupIds && input.targetGroupIds.length > 0) {
+      const allowed = new Set(input.targetGroupIds);
+      candidateGroups = candidateGroups.filter((g) => allowed.has(g.groupId));
+    }
 
     const dateBucket = input.dispatchDate.toISOString().slice(0, 10);
     const jobs: CampaignDispatchJob[] = [];

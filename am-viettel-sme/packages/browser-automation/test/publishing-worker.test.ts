@@ -347,5 +347,97 @@ describe("PublishingWorker — Playwright Full-Auto, Semi-Auto & Session Safety 
     expect(vnRes.status).toBe("PUBLISHED");
     expect(vnFbMock.clickedSelectors).toContain("[aria-label='Đăng']");
   });
+
+  it("PB-P08: supports PREPARE_ONLY and ASSISTED_PUBLISH modes with onStep lifecycle callbacks", async () => {
+    const mock = createPublisherMockPage({
+      url: "https://chat.zalo.me/",
+      visibleSelectors: [
+        "#main-tab",
+        "[data-testid='compose-post']",
+        "[contenteditable='true']",
+        "input[type='file']",
+        "[data-testid='submit-post']",
+      ],
+    });
+    const ctx = wrapContext(mock.page);
+    const recordedSteps: Array<{ stepName: string; status: string; details?: string | undefined }> = [];
+
+    const profileManager = new BrowserProfileManager({
+      storageRootDir: tempDir,
+      launcher: { launchPersistentContext: vi.fn(async () => ctx) },
+    });
+    const sessionStore = new InMemoryAccountSessionStore();
+    const worker = new PublishingWorker({
+      profileManager,
+      sessionStore,
+      evidenceDir: path.join(tempDir, "evidence"),
+      onStep: async (step) => {
+        recordedSteps.push(step);
+      },
+    });
+
+    const result = await worker.executePublishingJob({
+      jobId: "job-zalo-prepare-only",
+      accountId: "am_zalo_prep",
+      platform: "ZALO",
+      contentId: "PB001",
+      content: "Nội dung chuẩn bị cho AM kiểm duyệt trên Desktop Agent",
+      mediaPaths: [sampleImagePath],
+      mode: "PREPARE_ONLY" as any,
+    });
+
+    expect(result.status).toBe("AWAITING_AM_CONFIRMATION");
+    expect(mock.clickedSelectors).not.toContain("[data-testid='submit-post']");
+    expect(recordedSteps.map((s) => s.stepName)).toEqual([
+      "CHECK_SESSION",
+      "PREPARE_COMPOSER",
+      "CAPTURE_EVIDENCE",
+    ]);
+  });
+
+  it("PB-P09: executes Facebook group publishing when targetGroupUrl is provided", async () => {
+    const composerSelector = "div[role='button']:has-text('Bạn viết gì đi...')";
+    const textboxSelector = "div[role='dialog'] div[role='textbox'][contenteditable='true']";
+    const submitSelector = "div[role='dialog'] div[aria-label='Đăng']";
+
+    const mock = createPublisherMockPage({
+      url: "https://www.facebook.com/groups/sme_dian_test",
+      visibleSelectors: [
+        "[role='navigation']", // for auth check
+        composerSelector,
+        textboxSelector,
+        submitSelector,
+      ],
+    });
+    // add keyboard support to mock
+    (mock.page as any).keyboard = {
+      insertText: vi.fn(async () => {}),
+      press: vi.fn(async () => {}),
+    };
+    const ctx = wrapContext(mock.page);
+
+    const worker = new PublishingWorker({
+      profileManager: new BrowserProfileManager({
+        storageRootDir: tempDir,
+        launcher: { launchPersistentContext: vi.fn(async () => ctx) },
+      }),
+      sessionStore: new InMemoryAccountSessionStore(),
+      evidenceDir: path.join(tempDir, "evidence"),
+    });
+
+    const result = await worker.executePublishingJob({
+      jobId: "job-fb-group-01",
+      accountId: "fb_group_am",
+      platform: "FACEBOOK",
+      contentId: "GROUP_POST_01",
+      content: "Giải pháp Hóa đơn điện tử Viettel S-Invoice cho SME Dĩ An",
+      mode: "FULL_AUTO",
+      targetGroupUrl: "https://www.facebook.com/groups/sme_dian_test",
+      targetType: "GROUP",
+    });
+
+    expect(result.status).toBe("PUBLISHED");
+    expect(result.publishedUrl).toBe("https://www.facebook.com/groups/sme_dian_test");
+  });
 });
 

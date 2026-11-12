@@ -123,6 +123,10 @@ export class GroupManager {
     return found ? { ...found } : null;
   }
 
+  deleteGroup(groupId: string): boolean {
+    return this.groups.delete(groupId.trim());
+  }
+
   listGroups(filter?: {
     categories?: readonly GroupCategory[] | undefined;
     platform?: GroupPlatform | undefined;

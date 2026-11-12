@@ -1,5 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
+  parseXlsxWorkbook,
+  inspectHeaders,
+  validateColumnMapping,
+  mapLeadRow,
+  type ColumnMappingEntry,
+  type MappedLeadDraft,
+  type ParsedXlsxWorkbook,
+} from "@am-sme/excel-import";
+import type {
+  ImportPreviewRow,
+  PreparedImportSummary,
+  ImportReviewChoice,
+} from "@am-sme/database/import-workflow";
+import {
   HttpAuthGuard,
   type AuthPrincipal,
   type AuthRole,
@@ -22,6 +36,31 @@ import type { ImportPreviewPort } from "./import-api.js";
 import { InMemoryImportApi } from "./import-api.js";
 import { WorkspaceOperationsHub } from "./operations-hub.js";
 import type { ApiServices, SqlPort } from "./http-api.js";
+import {
+  GoogleOAuthService,
+  GoogleDriveConnector,
+  GoogleDocsConnector,
+  GoogleDocsSyncService,
+  TopicClassifier,
+} from "@am-sme/content-library";
+import type { GoogleConnectionRepository } from "@am-sme/database/google-connections";
+import type {
+  ContentLibraryRepository,
+  GoogleDocumentRecord,
+  ContentPostRecord,
+  ContentVersionRecord,
+  MediaAssetRecord,
+  MediaVersionRecord,
+  ContentMediaLinkRecord,
+  LinkedMediaAssetRecord,
+  ContentApprovalRecord,
+  SocialAccountRecord,
+  PublishingCampaignRecord,
+  PublishingScheduleRecord,
+  PublishingJobRecord,
+  PublishingJobStepRecord,
+  PublishingResultRecord,
+} from "@am-sme/database/content-library";
 
 const DEFAULT_WORKSPACE = "viettel-sme";
 
@@ -521,17 +560,28 @@ export function createDemoApiServices(): ApiServices {
         createdAt: new Date().toISOString(),
       });
     },
-    async addNote(actor: AuthPrincipal, input: { leadId: string; content: string }) {
-      const found = leadsStore.find((l) => l.id === input.leadId);
+    async addNote(
+      actor: AuthPrincipal,
+      leadIdOrInput: string | { leadId: string; content: string },
+      contentParam?: string,
+    ) {
+      const leadId =
+        typeof leadIdOrInput === "string" ? leadIdOrInput : leadIdOrInput.leadId;
+      const content =
+        typeof leadIdOrInput === "string"
+          ? contentParam ?? ""
+          : leadIdOrInput.content;
+      const found = leadsStore.find((l) => l.id === leadId);
       if (!found) throw new Error("LEAD_NOT_FOUND");
       const noteId = `note-${randomUUID().slice(0, 6)}`;
       found.notes.unshift({
         id: noteId,
-        content: input.content,
+        content,
         createdAt: new Date().toISOString(),
-        authorName: activeUsers.find((u) => u.id === actor.userId)?.displayName ?? "AM",
+        authorName:
+          activeUsers.find((u) => u.id === actor.userId)?.displayName ?? "AM",
       });
-      return { noteId };
+      return { noteId, content, id: noteId, authorUserId: actor.userId, createdAt: new Date() };
     },
     async assignLead(_actor: AuthPrincipal, leadId: string, ownerUserId: string) {
       const found = leadsStore.find((l) => l.id === leadId);
@@ -604,16 +654,26 @@ export function createDemoApiServices(): ApiServices {
         skipped: [],
       };
     },
-    async listTasks() {
-      return tasksStore.map((t) => ({
-        id: t.id,
-        type: t.type,
-        outcomeGoal: t.outcomeGoal,
-        dueAt: new Date(t.dueAt),
-        estimatedMinutes: t.estimatedMinutes,
-        approvalStatus: t.approvalStatus,
-        leadId: t.leadId,
-      }));
+    async listTasks(
+      _actor?: AuthPrincipal,
+      filter?: { status?: string; assigneeUserId?: string },
+    ) {
+      return tasksStore
+        .filter((t) => {
+          if (filter?.status && t.status !== filter.status) return false;
+          if (filter?.assigneeUserId && t.assigneeUserId !== filter.assigneeUserId)
+            return false;
+          return true;
+        })
+        .map((t) => ({
+          id: t.id,
+          type: t.type,
+          outcomeGoal: t.outcomeGoal,
+          dueAt: new Date(t.dueAt),
+          estimatedMinutes: t.estimatedMinutes,
+          approvalStatus: t.approvalStatus,
+          leadId: t.leadId,
+        }));
     },
     async createTask(_actor: AuthPrincipal, input: CreateTaskInput) {
       const id = `task-${randomUUID().slice(0, 8)}`;
@@ -669,46 +729,246 @@ export function createDemoApiServices(): ApiServices {
     },
   };
 
+  interface InMemoryPreviewSession {
+    previewId: string;
+    parsed: ParsedXlsxWorkbook;
+    columnMap: ColumnMappingEntry[];
+    mappedRows: {
+      rowNumber: number;
+      lead: MappedLeadDraft | null;
+      status: "READY" | "INVALID";
+    }[];
+    prepared?: {
+      preparedCommitId: string;
+      decisions: readonly ImportReviewChoice[];
+      summary: PreparedImportSummary;
+    };
+  }
+  const previewSessions = new Map<string, InMemoryPreviewSession>();
+
   const previewPort: ImportPreviewPort = {
-    previewWorkbook() {
+    previewWorkbook(input) {
+      const parsed = parseXlsxWorkbook(input.filename, input.bytes, {
+        maxRows: 10_001,
+        maxColumns: 64,
+      });
+      if (!parsed.success) {
+        return { success: false, errorCode: parsed.errorCode };
+      }
+
+      let headerInspection = inspectHeaders(parsed.headers);
+      if (input.mapping) {
+        const validated = validateColumnMapping(input.mapping);
+        if (validated.status !== "READY") {
+          return {
+            success: false,
+            errorCode: "HEADER_MAPPING_INVALID",
+            headerInspection,
+          };
+        }
+        headerInspection = {
+          ...headerInspection,
+          columnMap: validated.columnMap,
+        };
+      }
+
+      const columnMap = headerInspection.columnMap;
+      const mappedRows: {
+        rowNumber: number;
+        lead: MappedLeadDraft | null;
+        status: "READY" | "INVALID";
+      }[] = [];
+      const publicRows: ImportPreviewRow[] = [];
+
+      for (const row of parsed.rows) {
+        const mapped = mapLeadRow(row.values, columnMap);
+        if (mapped.success) {
+          mappedRows.push({
+            rowNumber: row.rowNumber,
+            lead: mapped.lead,
+            status: "READY",
+          });
+          publicRows.push({
+            rowNumber: row.rowNumber,
+            status: "READY",
+            companyName: mapped.lead.company_name,
+            stage: mapped.lead.stage,
+            contact: {
+              phoneMasked: mapped.lead.phone
+                ? mapped.lead.phone.replace(/(\d{3})\d{4}(\d{3})/, "$1****$2")
+                : null,
+              emailMasked: mapped.lead.email
+                ? mapped.lead.email.replace(/(.{2})(.*)(@.*)/, "$1***$3")
+                : null,
+            },
+            issues: [],
+            consentStatus: mapped.lead.consent_status,
+            contactabilityStatus: mapped.lead.contactability_status,
+            provenanceReviewReasons: [],
+            suppressionIntent: null,
+            duplicateReview: null,
+            humanDecisionRequired: true as const,
+          });
+        } else {
+          mappedRows.push({
+            rowNumber: row.rowNumber,
+            lead: null,
+            status: "INVALID",
+          });
+          publicRows.push({
+            rowNumber: row.rowNumber,
+            status: "INVALID",
+            companyName: String(row.values[0] ?? `Dòng ${row.rowNumber}`),
+            stage: "PENDING_REVIEW" as const,
+            contact: { phoneMasked: null, emailMasked: null },
+            issues: [...mapped.errors],
+            consentStatus: "UNKNOWN",
+            contactabilityStatus: "UNKNOWN",
+            provenanceReviewReasons: [],
+            suppressionIntent: null,
+            duplicateReview: null,
+            humanDecisionRequired: true as const,
+          });
+        }
+      }
+
+      const previewId = randomUUID();
+      previewSessions.set(previewId, {
+        previewId,
+        parsed,
+        columnMap: [...columnMap],
+        mappedRows,
+      });
+
       return {
         success: true,
         preview: {
-          previewId: "preview-demo",
-          headerInspection: {
-            status: "READY",
-            columnMap: [
-              { sourceColumnIndex: 0, targetField: "company_name" },
-              { sourceColumnIndex: 1, targetField: "phone" },
-              { sourceColumnIndex: 2, targetField: "industry" },
-              { sourceColumnIndex: 3, targetField: "district" },
-            ],
-            quarantinedColumns: [],
-            errors: [],
-            warnings: [],
-          },
-          rows: [],
-          totalRows: 0,
-          commitEligible: false,
+          previewId,
+          headerInspection,
+          rows: publicRows,
+          totalRows: parsed.rows.length,
+          commitEligible: false as const,
           decisionStatus: "AWAITING_AM_REVIEW",
         },
       };
     },
-    prepareReviewedCommit() {
+
+    prepareReviewedCommit(input) {
+      const session = previewSessions.get(input.previewId);
+      if (!session) return { success: false, errorCode: "PREVIEW_NOT_FOUND" };
+
+      const preparedCommitId = randomUUID();
+      const rowsToKeep = input.decisions.filter((d) => d.action === "KEEP").length;
+      const rowsToMerge = input.decisions.filter((d) => d.action === "MERGE").length;
+      const rowsToSkip = input.decisions.filter((d) => d.action === "SKIP").length;
+      const summary: PreparedImportSummary = {
+        totalRows: session.mappedRows.length,
+        rowsToKeep,
+        rowsToMerge,
+        rowsToSkip,
+        duplicateCandidateRows: 0,
+      };
+
+      session.prepared = {
+        preparedCommitId,
+        decisions: input.decisions,
+        summary,
+      };
+
       return {
         success: true,
-        preparedCommitId: "prep-1",
-        summary: {
-          totalRows: 0,
-          rowsToKeep: 0,
-          rowsToMerge: 0,
-          rowsToSkip: 0,
-          duplicateCandidateRows: 0,
-        },
+        preparedCommitId,
+        summary,
       };
     },
-    commitPrepared: async () => ({ success: true }),
-    discardPreview: () => true,
+
+    commitPrepared: async (preparedCommitId, context) => {
+      let targetSession: InMemoryPreviewSession | undefined;
+      for (const s of previewSessions.values()) {
+        if (s.prepared?.preparedCommitId === preparedCommitId) {
+          targetSession = s;
+          break;
+        }
+      }
+      if (!targetSession || !targetSession.prepared) {
+        return { success: false, errorCode: "COMMIT_NOT_PREPARED" };
+      }
+
+      const decisionsMap = new Map(
+        targetSession.prepared.decisions.map((d) => [d.rowNumber, d.action]),
+      );
+      let importedCount = 0;
+
+      for (const row of targetSession.mappedRows) {
+        const decision =
+          decisionsMap.get(row.rowNumber) ?? (row.status === "READY" ? "KEEP" : "SKIP");
+        if (decision === "KEEP" && row.status === "READY" && row.lead) {
+          const newLeadId = `lead-${randomUUID().slice(0, 8)}`;
+          const stored: StoredLead = {
+            id: newLeadId,
+            workspaceId: DEFAULT_WORKSPACE,
+            companyName: row.lead.company_name,
+            industry: row.lead.industry ?? "Chưa phân loại",
+            district: row.lead.district ?? "TP.HCM",
+            province: "TP. Hồ Chí Minh",
+            stage: "NEW",
+            ownerUserId: "user-am",
+            ownerName: "Lê Văn AM",
+            contactName: row.lead.contact_name ?? "Đại diện pháp luật",
+            phone: row.lead.phone ?? "Chưa có",
+            email: row.lead.email ?? "Chưa có",
+            contactabilityStatus: "UNKNOWN",
+            notes: row.lead.notes
+              ? [
+                  {
+                    id: randomUUID(),
+                    content: row.lead.notes,
+                    createdAt: new Date().toISOString(),
+                    authorName: "Hệ thống Import Excel",
+                  },
+                ]
+              : [],
+            timeline: [
+              {
+                id: randomUUID(),
+                type: "LEAD_CREATED",
+                summary: "Nhập khẩu từ file Excel",
+                createdAt: new Date().toISOString(),
+              },
+            ],
+            productInterests: [
+              {
+                id: randomUUID(),
+                productName: "Chữ ký số Viettel-CA",
+                status: "AM_CONFIRMED",
+              },
+              {
+                id: randomUUID(),
+                productName: "Hóa đơn điện tử S-Invoice",
+                status: "AM_CONFIRMED",
+              },
+            ],
+          };
+          leadsStore.unshift(stored);
+          importedCount++;
+        }
+      }
+
+      auditEvents.push({
+        id: randomUUID(),
+        actorId: context.actorId,
+        actorRole: "AM",
+        action: "EXCEL_IMPORT_COMMITTED",
+        entityType: "LeadImportJob",
+        entityId: preparedCommitId,
+        changedFieldNames: ["leadsCount"],
+        createdAt: new Date(),
+      });
+
+      return { success: true, count: importedCount };
+    },
+
+    discardPreview: (id) => previewSessions.delete(id),
     discardPreparedCommit: () => true,
   };
 
@@ -768,6 +1028,1056 @@ export function createDemoApiServices(): ApiServices {
 
   const operations = new WorkspaceOperationsHub();
 
+  const googleConnectionsStore: Array<{
+    id: string;
+    workspaceId: string;
+    provider: string;
+    accountEmail: string;
+    scopes: readonly string[];
+    status: "CONNECTED" | "EXPIRED" | "REVOKED" | "ERROR";
+    encryptedRefreshToken: string | null;
+    expiresAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }> = [
+    {
+      id: "conn-viettel-dian",
+      workspaceId: DEFAULT_WORKSPACE,
+      provider: "GOOGLE",
+      accountEmail: "am.vietteldian@gmail.com",
+      scopes: [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/documents.readonly",
+      ],
+      status: "CONNECTED",
+      encryptedRefreshToken: "enc:demo-refresh-token",
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ];
+
+  const googleFoldersStore: Array<{
+    id: string;
+    connectionId: string;
+    driveFolderId: string;
+    folderName: string;
+    folderType: "ROOT" | "CONTENT" | "MEDIA" | "ARCHIVE" | "OTHER";
+    pathHint: string | null;
+    registeredAt: Date;
+    lastSyncedAt: Date | null;
+  }> = [
+    {
+      id: "folder-viettel-am-root",
+      connectionId: "conn-viettel-dian",
+      driveFolderId: "drive_root_viettel_am",
+      folderName: "VIETTEL_AM",
+      folderType: "ROOT",
+      pathHint: "/VIETTEL_AM",
+      registeredAt: new Date(),
+      lastSyncedAt: new Date(),
+    },
+    {
+      id: "folder-content",
+      connectionId: "conn-viettel-dian",
+      driveFolderId: "drive_content_dir",
+      folderName: "CONTENT",
+      folderType: "CONTENT",
+      pathHint: "/VIETTEL_AM/PERSONAL_BRANDING/CONTENT",
+      registeredAt: new Date(),
+      lastSyncedAt: new Date(),
+    },
+    {
+      id: "folder-media",
+      connectionId: "conn-viettel-dian",
+      driveFolderId: "drive_media_dir",
+      folderName: "MEDIA",
+      folderType: "MEDIA",
+      pathHint: "/VIETTEL_AM/PERSONAL_BRANDING/MEDIA",
+      registeredAt: new Date(),
+      lastSyncedAt: new Date(),
+    },
+  ];
+
+  const googleSyncLogsStore: Array<{
+    id: string;
+    connectionId: string;
+    entityId: string;
+    syncType: string;
+    syncStatus: "SUCCESS" | "FAILED" | "IN_PROGRESS";
+    itemsSynced: number;
+    errorMessage: string | null;
+    createdAt: Date;
+  }> = [];
+
+  const googleConnectionsRepo = {
+    async createConnection(input: any) {
+      const conn = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        provider: "GOOGLE",
+        accountEmail: input.accountEmail,
+        scopes: input.scopes,
+        status: "CONNECTED" as const,
+        encryptedRefreshToken: input.encryptedRefreshToken ?? null,
+        expiresAt: input.expiresAt ?? null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      googleConnectionsStore.unshift(conn);
+      return conn;
+    },
+    async getConnectionById(wsId: string, id: string) {
+      return (
+        googleConnectionsStore.find(
+          (c) => c.workspaceId === wsId && c.id === id,
+        ) ?? null
+      );
+    },
+    async listConnections(wsId: string) {
+      return googleConnectionsStore.filter((c) => c.workspaceId === wsId);
+    },
+    async updateConnectionStatus(
+      wsId: string,
+      id: string,
+      status: "CONNECTED" | "EXPIRED" | "REVOKED" | "ERROR",
+    ) {
+      const found = googleConnectionsStore.find(
+        (c) => c.workspaceId === wsId && c.id === id,
+      );
+      if (found) {
+        found.status = status;
+        found.updatedAt = new Date();
+        return true;
+      }
+      return false;
+    },
+    async revokeConnection(wsId: string, id: string) {
+      const found = googleConnectionsStore.find(
+        (c) => c.workspaceId === wsId && c.id === id,
+      );
+      if (found) {
+        found.status = "REVOKED";
+        found.encryptedRefreshToken = null;
+        found.updatedAt = new Date();
+        return true;
+      }
+      return false;
+    },
+    async registerFolder(input: any) {
+      const folder = {
+        id: randomUUID(),
+        connectionId: input.connectionId,
+        driveFolderId: input.driveFolderId,
+        folderName: input.folderName,
+        folderType: input.folderType,
+        pathHint: input.pathHint ?? null,
+        registeredAt: new Date(),
+        lastSyncedAt: null,
+      };
+      googleFoldersStore.push(folder);
+      return folder;
+    },
+    async listFolders(wsId: string, connectionId: string) {
+      return googleFoldersStore.filter((f) => f.connectionId === connectionId);
+    },
+    async updateFolderSyncTime(folderId: string) {
+      const folder = googleFoldersStore.find((f) => f.id === folderId);
+      if (folder) folder.lastSyncedAt = new Date();
+    },
+    async appendSyncLog(input: any) {
+      const log = {
+        id: randomUUID(),
+        connectionId: input.connectionId,
+        entityId: input.entityId,
+        syncType: input.syncType,
+        syncStatus: input.syncStatus,
+        itemsSynced: input.itemsSynced,
+        errorMessage: input.errorMessage ?? null,
+        createdAt: new Date(),
+      };
+      googleSyncLogsStore.unshift(log);
+      return log;
+    },
+    async listSyncLogs(connectionId: string, limit = 50) {
+      return googleSyncLogsStore
+        .filter((l) => l.connectionId === connectionId)
+        .slice(0, limit);
+    },
+  } as unknown as GoogleConnectionRepository;
+
+  const googleOAuth = new GoogleOAuthService(
+    {
+      clientId: "viettel-am-google-oauth-client-id",
+      clientSecret: "viettel-am-google-oauth-secret",
+      redirectUri: "http://127.0.0.1:3000/api/v1/google/oauth/callback",
+    },
+    {
+      async postJson(url) {
+        if (url === "https://oauth2.googleapis.com/token") {
+          return {
+            status: 200,
+            data: {
+              access_token: "demo-google-access-token",
+              refresh_token: "demo-google-refresh-token",
+              expires_in: 3600,
+              scope:
+                "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly",
+              token_type: "Bearer",
+            },
+          };
+        }
+        return { status: 200, data: {} };
+      },
+      async getJson(url) {
+        if (url === "https://www.googleapis.com/oauth2/v3/userinfo") {
+          return {
+            status: 200,
+            data: {
+              email: "am.vietteldian@gmail.com",
+              email_verified: true,
+            },
+          };
+        }
+        return { status: 200, data: {} };
+      },
+    },
+  );
+
+  const demoDriveFiles = [
+    { id: "img-cks-01", name: "chu_ky_so_01.jpg", mimeType: "image/jpeg" },
+    { id: "img-hddt-01", name: "hoa_don_dien_tu_01.png", mimeType: "image/png" },
+    { id: "img-vcontract-01", name: "vcontract_hop_dong_01.jpg", mimeType: "image/jpeg" },
+    { id: "img-ftth-01", name: "ftth_internet_doanh_nghiep.png", mimeType: "image/png" },
+    {
+      id: "doc-pb-01",
+      name: "Viettel_AM_Personal_Branding_Posts.gdoc",
+      mimeType: "application/vnd.google-apps.document",
+    },
+  ];
+
+  const googleDrive = new GoogleDriveConnector({
+    async listFolderFiles() {
+      return demoDriveFiles;
+    },
+    async downloadFileBytes() {
+      return new Uint8Array([137, 80, 78, 71]);
+    },
+    async getFileMetadata(id: string) {
+      return {
+        id,
+        name: "VIETTEL_AM",
+        mimeType: "application/vnd.google-apps.folder",
+      };
+    },
+  });
+
+  const googleDocumentsStore: GoogleDocumentRecord[] = [
+    {
+      id: "doc-pb-01",
+      connectionId: "conn-viettel-dian",
+      documentId: "gdoc_viettel_am_posts",
+      name: "Viettel_AM_Personal_Branding_Posts",
+      revisionId: "rev_001",
+      contentHash: "hash-doc-demo-01",
+      postCount: 3,
+      modifiedAt: new Date().toISOString(),
+      syncedAt: new Date().toISOString(),
+    },
+  ];
+
+  const contentPostsStore: ContentPostRecord[] = [
+    {
+      id: "post-demo-01",
+      workspaceId: DEFAULT_WORKSPACE,
+      documentId: "doc-pb-01",
+      postCode: "PB001",
+      title: "Vì sao doanh nghiệp mới thành lập nên quan tâm đến chữ ký số?",
+      body: "Chữ ký số giúp doanh nghiệp kê khai thuế điện tử, nộp BHXH và ký hóa đơn nhanh chóng, bảo mật tuyệt đối với chứng thư số đạt chuẩn quốc tế của Viettel-CA.",
+      topicCode: "CHU_KY_SO",
+      targetAudience: "BUSINESS_OWNER",
+      platforms: ["ZALO", "FACEBOOK"],
+      status: "APPROVED",
+      priority: "HIGH",
+      mediaHint: "AUTO",
+      hashtags: ["#Viettel", "#ChuKySo", "#DoanhNghiep"],
+      version: 1,
+      contentHash: "hash-pb001",
+      validFrom: null,
+      validUntil: null,
+      createdAt: new Date(Date.now() - 3600000).toISOString(),
+      updatedAt: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: "post-demo-02",
+      workspaceId: DEFAULT_WORKSPACE,
+      documentId: "doc-pb-01",
+      postCode: "PB002",
+      title: "Hóa đơn điện tử S-Invoice và những điều kế toán cần lưu ý",
+      body: "Khởi tạo nhanh chóng, tích hợp phần mềm kế toán và lưu trữ an toàn 10 năm trên hạ tầng đám mây Viettel đạt chuẩn Tier 3.",
+      topicCode: "HOA_DON_DIEN_TU",
+      targetAudience: "BUSINESS_OWNER",
+      platforms: ["ZALO", "FACEBOOK"],
+      status: "APPROVED",
+      priority: "NORMAL",
+      mediaHint: "AUTO",
+      hashtags: ["#HoaDonDienTu", "#Viettel", "#SInvoice"],
+      version: 1,
+      contentHash: "hash-pb002",
+      validFrom: null,
+      validUntil: null,
+      createdAt: new Date(Date.now() - 7200000).toISOString(),
+      updatedAt: new Date(Date.now() - 7200000).toISOString(),
+    },
+    {
+      id: "post-demo-03",
+      workspaceId: DEFAULT_WORKSPACE,
+      documentId: "doc-pb-01",
+      postCode: "PB003",
+      title: "Hợp đồng điện tử vContract - Ký kết mọi lúc, mọi nơi",
+      body: "Rút ngắn 80% thời gian ký kết hợp đồng thương mại, pháp lý vững chắc được Bộ Công Thương chứng thực Trục phát triển hợp đồng điện tử Việt Nam.",
+      topicCode: "VCONTRACT",
+      targetAudience: "BUSINESS_OWNER",
+      platforms: ["ZALO"],
+      status: "DRAFT",
+      priority: "NORMAL",
+      mediaHint: null,
+      hashtags: ["#vContract", "#Viettel"],
+      version: 1,
+      contentHash: "hash-pb003",
+      validFrom: null,
+      validUntil: null,
+      createdAt: new Date(Date.now() - 10800000).toISOString(),
+      updatedAt: new Date(Date.now() - 10800000).toISOString(),
+    },
+  ];
+
+  const contentVersionsStore: ContentVersionRecord[] = [
+    {
+      id: "ver-demo-01",
+      contentId: "post-demo-01",
+      version: 1,
+      contentHash: "hash-pb001",
+      title: contentPostsStore[0]!.title,
+      body: contentPostsStore[0]!.body,
+      topicCode: contentPostsStore[0]!.topicCode,
+      hashtags: contentPostsStore[0]!.hashtags,
+      createdAt: contentPostsStore[0]!.createdAt,
+    },
+    {
+      id: "ver-demo-02",
+      contentId: "post-demo-02",
+      version: 1,
+      contentHash: "hash-pb002",
+      title: contentPostsStore[1]!.title,
+      body: contentPostsStore[1]!.body,
+      topicCode: contentPostsStore[1]!.topicCode,
+      hashtags: contentPostsStore[1]!.hashtags,
+      createdAt: contentPostsStore[1]!.createdAt,
+    },
+    {
+      id: "ver-demo-03",
+      contentId: "post-demo-03",
+      version: 1,
+      contentHash: "hash-pb003",
+      title: contentPostsStore[2]!.title,
+      body: contentPostsStore[2]!.body,
+      topicCode: contentPostsStore[2]!.topicCode,
+      hashtags: contentPostsStore[2]!.hashtags,
+      createdAt: contentPostsStore[2]!.createdAt,
+    },
+  ];
+
+  const mediaAssetsStore: MediaAssetRecord[] = [
+    {
+      id: "media-demo-01",
+      workspaceId: DEFAULT_WORKSPACE,
+      connectionId: "conn-demo-01",
+      driveFileId: "drive-media-cks-01",
+      fileName: "PB001_CHU_KY_SO_1.png",
+      mimeType: "image/png",
+      sizeBytes: 312000,
+      checksum: "sha256-demo-cks-01",
+      topicCode: "CHU_KY_SO",
+      postCodeHint: "PB001",
+      platforms: ["ZALO", "FACEBOOK"],
+      status: "APPROVED",
+      version: 1,
+      isSharedMedia: false,
+      createdAt: new Date(Date.now() - 3600000).toISOString(),
+      updatedAt: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: "media-demo-02",
+      workspaceId: DEFAULT_WORKSPACE,
+      connectionId: "conn-demo-01",
+      driveFileId: "drive-media-shared-01",
+      fileName: "SHARED_VIETTEL_SME.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 245000,
+      checksum: "sha256-demo-shared-01",
+      topicCode: "SHARED_MEDIA",
+      postCodeHint: null,
+      platforms: ["ZALO", "FACEBOOK"],
+      status: "APPROVED",
+      version: 1,
+      isSharedMedia: true,
+      createdAt: new Date(Date.now() - 7200000).toISOString(),
+      updatedAt: new Date(Date.now() - 7200000).toISOString(),
+    },
+  ];
+
+  const mediaVersionsStore: MediaVersionRecord[] = [
+    {
+      id: "mv-demo-01",
+      mediaId: "media-demo-01",
+      version: 1,
+      checksum: "sha256-demo-cks-01",
+      sizeBytes: 312000,
+      createdAt: mediaAssetsStore[0]!.createdAt,
+    },
+    {
+      id: "mv-demo-02",
+      mediaId: "media-demo-02",
+      version: 1,
+      checksum: "sha256-demo-shared-01",
+      sizeBytes: 245000,
+      createdAt: mediaAssetsStore[1]!.createdAt,
+    },
+  ];
+
+  const contentMediaLinksStore: ContentMediaLinkRecord[] = [];
+  const contentApprovalsStore: ContentApprovalRecord[] = [];
+
+  const socialAccountsStore: SocialAccountRecord[] = [
+    {
+      id: "acc-demo-zalo-01",
+      workspaceId: DEFAULT_WORKSPACE,
+      accountCode: "zalo-dian-am01",
+      platform: "ZALO",
+      displayName: "Zalo Lê Văn AM - Viettel Dĩ An",
+      ownerUserId: "user-am",
+      profileDir: "storage/browser_profiles/zalo-dian-am01",
+      assignedTopics: ["CHU_KY_SO", "HOA_DON_DIEN_TU", "VCONTRACT"],
+      maxPostsPerDay: 2,
+      minIntervalMinutes: 180,
+      preferredWindows: ["08:00-10:00", "13:30-15:30"],
+      status: "ACTIVE",
+      lastSessionCheckAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: "acc-demo-fb-01",
+      workspaceId: DEFAULT_WORKSPACE,
+      accountCode: "fb-viettel-sme",
+      platform: "FACEBOOK",
+      displayName: "Facebook Lê Văn AM - Giải pháp Doanh nghiệp",
+      ownerUserId: "user-am",
+      profileDir: "storage/browser_profiles/fb-viettel-sme",
+      assignedTopics: ["CHU_KY_SO", "HOA_DON_DIEN_TU"],
+      maxPostsPerDay: 2,
+      minIntervalMinutes: 180,
+      preferredWindows: ["08:30-10:30", "19:30-21:00"],
+      status: "ACTIVE",
+      lastSessionCheckAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+
+  const publishingCampaignsStore: PublishingCampaignRecord[] = [];
+  const publishingSchedulesStore: PublishingScheduleRecord[] = [];
+  const publishingJobsStore: PublishingJobRecord[] = [];
+  const publishingJobStepsStore: PublishingJobStepRecord[] = [];
+  const publishingResultsStore: PublishingResultRecord[] = [];
+
+  const contentLibrary = {
+    async upsertGoogleDocument(input: any) {
+      const idx = googleDocumentsStore.findIndex(
+        (d) => d.connectionId === input.connectionId && d.documentId === input.documentId,
+      );
+      if (idx >= 0) {
+        const updated = {
+          ...googleDocumentsStore[idx]!,
+          name: input.name,
+          revisionId: input.revisionId ?? googleDocumentsStore[idx]!.revisionId,
+          contentHash: input.contentHash ?? googleDocumentsStore[idx]!.contentHash,
+          postCount: input.postCount ?? googleDocumentsStore[idx]!.postCount,
+          modifiedAt: input.modifiedAt ? new Date(input.modifiedAt).toISOString() : googleDocumentsStore[idx]!.modifiedAt,
+          syncedAt: new Date().toISOString(),
+        };
+        googleDocumentsStore[idx] = updated;
+        return updated;
+      }
+      const created: GoogleDocumentRecord = {
+        id: randomUUID(),
+        connectionId: input.connectionId,
+        documentId: input.documentId,
+        name: input.name,
+        revisionId: input.revisionId ?? null,
+        contentHash: input.contentHash ?? null,
+        postCount: input.postCount ?? 0,
+        modifiedAt: input.modifiedAt ? new Date(input.modifiedAt).toISOString() : null,
+        syncedAt: new Date().toISOString(),
+      };
+      googleDocumentsStore.push(created);
+      return created;
+    },
+    async getGoogleDocument(connectionId: any, documentId: any) {
+      return (
+        googleDocumentsStore.find(
+          (d) => d.connectionId === connectionId && d.documentId === documentId,
+        ) ?? null
+      );
+    },
+    async listGoogleDocuments(connectionId: any) {
+      return googleDocumentsStore.filter(
+        (d) => !connectionId || d.connectionId === connectionId,
+      );
+    },
+    async upsertPost(input: any) {
+      const idx = contentPostsStore.findIndex(
+        (p) => p.workspaceId === input.workspaceId && p.postCode === input.postCode,
+      );
+      if (idx < 0) {
+        const id = randomUUID();
+        const post: ContentPostRecord = {
+          id,
+          workspaceId: input.workspaceId,
+          documentId: input.documentId ?? null,
+          postCode: input.postCode,
+          title: input.title,
+          body: input.body,
+          topicCode: input.topicCode,
+          targetAudience: input.targetAudience ?? "BUSINESS_OWNER",
+          platforms: [...(input.platforms ?? [])],
+          status: input.status ?? "DRAFT",
+          priority: input.priority ?? "NORMAL",
+          mediaHint: input.mediaHint ?? null,
+          hashtags: [...(input.hashtags ?? [])],
+          version: 1,
+          contentHash: input.contentHash,
+          validFrom: input.validFrom ? new Date(input.validFrom).toISOString() : null,
+          validUntil: input.validUntil ? new Date(input.validUntil).toISOString() : null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        contentPostsStore.unshift(post);
+        contentVersionsStore.push({
+          id: randomUUID(),
+          contentId: id,
+          version: 1,
+          contentHash: input.contentHash,
+          title: input.title,
+          body: input.body,
+          topicCode: input.topicCode,
+          hashtags: [...(input.hashtags ?? [])],
+          createdAt: post.createdAt,
+        });
+        return post;
+      }
+      const existing = contentPostsStore[idx]!;
+      if (existing.contentHash === input.contentHash) {
+        return existing;
+      }
+      const nextVersion = existing.version + 1;
+      const updated: ContentPostRecord = {
+        ...existing,
+        documentId: input.documentId ?? existing.documentId,
+        title: input.title,
+        body: input.body,
+        topicCode: input.topicCode,
+        targetAudience: input.targetAudience ?? existing.targetAudience,
+        platforms: [...(input.platforms ?? existing.platforms)],
+        priority: input.priority ?? existing.priority,
+        mediaHint: input.mediaHint ?? existing.mediaHint,
+        hashtags: [...(input.hashtags ?? existing.hashtags)],
+        version: nextVersion,
+        contentHash: input.contentHash,
+        validFrom: input.validFrom ? new Date(input.validFrom).toISOString() : existing.validFrom,
+        validUntil: input.validUntil ? new Date(input.validUntil).toISOString() : existing.validUntil,
+        updatedAt: new Date().toISOString(),
+      };
+      contentPostsStore[idx] = updated;
+      contentVersionsStore.push({
+        id: randomUUID(),
+        contentId: existing.id,
+        version: nextVersion,
+        contentHash: input.contentHash,
+        title: input.title,
+        body: input.body,
+        topicCode: input.topicCode,
+        hashtags: [...(input.hashtags ?? existing.hashtags)],
+        createdAt: updated.updatedAt,
+      });
+      return updated;
+    },
+    async getPostById(wsId: any, id: any) {
+      return contentPostsStore.find((p) => p.workspaceId === wsId && p.id === id) ?? null;
+    },
+    async getPostByCode(wsId: any, code: any) {
+      return contentPostsStore.find((p) => p.workspaceId === wsId && p.postCode === code) ?? null;
+    },
+    async listPosts(wsId: any, filters?: any) {
+      return contentPostsStore.filter((p) => {
+        if (p.workspaceId !== wsId) return false;
+        if (filters?.topicCode && p.topicCode !== filters.topicCode) return false;
+        if (filters?.status && p.status !== filters.status) return false;
+        if (filters?.documentId && p.documentId !== filters.documentId) return false;
+        return true;
+      });
+    },
+    async listPostVersions(contentId: any) {
+      return contentVersionsStore.filter((v) => v.contentId === contentId);
+    },
+    async updatePostStatus(wsId: any, id: any, status: any) {
+      const post = contentPostsStore.find((p) => p.workspaceId === wsId && p.id === id);
+      if (!post) return null;
+      (post as any).status = status;
+      (post as any).updatedAt = new Date().toISOString();
+      return post;
+    },
+    async upsertMediaAsset(input: any) {
+      const idx = mediaAssetsStore.findIndex(
+        (m) => m.workspaceId === input.workspaceId && m.driveFileId === input.driveFileId,
+      );
+      if (idx < 0) {
+        const id = randomUUID();
+        const nowIso = new Date().toISOString();
+        const created: MediaAssetRecord = {
+          id,
+          workspaceId: input.workspaceId,
+          connectionId: input.connectionId ?? null,
+          driveFileId: input.driveFileId,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          checksum: input.checksum,
+          topicCode: input.topicCode,
+          postCodeHint: input.postCodeHint ?? null,
+          platforms: [...(input.platforms ?? ["ZALO", "FACEBOOK"])],
+          status: input.status ?? "VALID",
+          version: 1,
+          isSharedMedia: Boolean(input.isSharedMedia),
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        mediaAssetsStore.unshift(created);
+        mediaVersionsStore.push({
+          id: randomUUID(),
+          mediaId: id,
+          version: 1,
+          checksum: input.checksum,
+          sizeBytes: input.sizeBytes,
+          createdAt: nowIso,
+        });
+        return created;
+      }
+
+      const existing = mediaAssetsStore[idx]!;
+      if (existing.checksum === input.checksum) {
+        return existing;
+      }
+      const nextVersion = existing.version + 1;
+      const nowIso = new Date().toISOString();
+      const updated: MediaAssetRecord = {
+        ...existing,
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        checksum: input.checksum,
+        topicCode: input.topicCode,
+        postCodeHint: input.postCodeHint ?? existing.postCodeHint,
+        platforms: [...(input.platforms ?? existing.platforms)],
+        status: input.status ?? existing.status,
+        version: nextVersion,
+        isSharedMedia:
+          input.isSharedMedia !== undefined ? input.isSharedMedia : existing.isSharedMedia,
+        updatedAt: nowIso,
+      };
+      mediaAssetsStore[idx] = updated;
+      mediaVersionsStore.push({
+        id: randomUUID(),
+        mediaId: existing.id,
+        version: nextVersion,
+        checksum: input.checksum,
+        sizeBytes: input.sizeBytes,
+        createdAt: nowIso,
+      });
+      return updated;
+    },
+    async getMediaById(wsId: any, id: any) {
+      return mediaAssetsStore.find((m) => m.workspaceId === wsId && m.id === id) ?? null;
+    },
+    async getMediaByDriveFileId(wsId: any, driveFileId: any) {
+      return (
+        mediaAssetsStore.find((m) => m.workspaceId === wsId && m.driveFileId === driveFileId) ??
+        null
+      );
+    },
+    async findMediaByChecksum(wsId: any, checksum: any) {
+      return mediaAssetsStore.find((m) => m.workspaceId === wsId && m.checksum === checksum) ?? null;
+    },
+    async listMediaAssets(wsId: any, filters?: any) {
+      return mediaAssetsStore.filter((m) => {
+        if (m.workspaceId !== wsId) return false;
+        if (filters?.topicCode && m.topicCode !== filters.topicCode) return false;
+        if (filters?.status && m.status !== filters.status) return false;
+        return true;
+      });
+    },
+    async listMediaVersions(mediaId: any) {
+      return mediaVersionsStore.filter((v) => v.mediaId === mediaId);
+    },
+    async updateMediaStatus(wsId: any, id: any, status: any) {
+      const media = mediaAssetsStore.find((m) => m.workspaceId === wsId && m.id === id);
+      if (!media) return null;
+      (media as any).status = status;
+      (media as any).updatedAt = new Date().toISOString();
+      return media;
+    },
+    async linkMediaToContent(input: any) {
+      const idx = contentMediaLinksStore.findIndex(
+        (l) => l.contentId === input.contentId && l.mediaId === input.mediaId,
+      );
+      const link: ContentMediaLinkRecord = {
+        id: idx >= 0 ? contentMediaLinksStore[idx]!.id : randomUUID(),
+        contentId: input.contentId,
+        mediaId: input.mediaId,
+        position: input.position ?? 0,
+        matchMethod: input.matchMethod ?? "AUTO",
+        matchScore: input.matchScore ?? 0,
+        createdAt: new Date().toISOString(),
+      };
+      if (idx >= 0) {
+        contentMediaLinksStore[idx] = link;
+      } else {
+        contentMediaLinksStore.push(link);
+      }
+      return link;
+    },
+    async listMediaForContent(contentId: any) {
+      const links = contentMediaLinksStore
+        .filter((l) => l.contentId === contentId)
+        .sort((a, b) => a.position - b.position);
+      const result: LinkedMediaAssetRecord[] = [];
+      for (const link of links) {
+        const asset = mediaAssetsStore.find((m) => m.id === link.mediaId);
+        if (asset) {
+          result.push({
+            ...asset,
+            position: link.position,
+            matchMethod: link.matchMethod,
+            matchScore: link.matchScore,
+          });
+        }
+      }
+      return result;
+    },
+    async recordContentApproval(input: any) {
+      const rec: ContentApprovalRecord = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        contentId: input.contentId,
+        contentVersion: input.contentVersion,
+        mediaVersion: input.mediaVersion ?? null,
+        approvedBy: input.approvedBy,
+        status: input.status,
+        approvedPlatforms: [...(input.approvedPlatforms ?? [])],
+        notes: input.notes ?? null,
+        createdAt: new Date().toISOString(),
+      };
+      contentApprovalsStore.push(rec);
+      return rec;
+    },
+    async listContentApprovals(contentId: any) {
+      return contentApprovalsStore.filter((a) => a.contentId === contentId);
+    },
+    async upsertSocialAccount(input: any) {
+      const cleanCode = input.accountCode.trim();
+      const idx = socialAccountsStore.findIndex(
+        (a) => a.workspaceId === input.workspaceId && a.accountCode === cleanCode,
+      );
+      if (idx >= 0) {
+        const existing = socialAccountsStore[idx]!;
+        const updated: SocialAccountRecord = {
+          ...existing,
+          displayName: input.displayName,
+          assignedTopics: [...(input.assignedTopics ?? existing.assignedTopics)],
+          maxPostsPerDay: input.maxPostsPerDay ?? existing.maxPostsPerDay,
+          minIntervalMinutes: input.minIntervalMinutes ?? existing.minIntervalMinutes,
+          preferredWindows: [...(input.preferredWindows ?? existing.preferredWindows)],
+          status: input.status ?? existing.status,
+          updatedAt: new Date().toISOString(),
+        };
+        socialAccountsStore[idx] = updated;
+        return updated;
+      }
+      const nowIso = new Date().toISOString();
+      const created: SocialAccountRecord = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        accountCode: cleanCode,
+        platform: input.platform,
+        displayName: input.displayName,
+        ownerUserId: input.ownerUserId,
+        profileDir: input.profileDir ?? `storage/browser_profiles/${cleanCode}`,
+        assignedTopics: [...(input.assignedTopics ?? [])],
+        maxPostsPerDay: input.maxPostsPerDay ?? 2,
+        minIntervalMinutes: input.minIntervalMinutes ?? 180,
+        preferredWindows: [...(input.preferredWindows ?? [])],
+        status: input.status ?? "ACTIVE",
+        lastSessionCheckAt: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      socialAccountsStore.push(created);
+      return created;
+    },
+    async getSocialAccountById(wsId: any, id: any) {
+      return (
+        socialAccountsStore.find(
+          (a) => a.workspaceId === wsId && (a.id === id || a.accountCode === id),
+        ) ?? null
+      );
+    },
+    async getSocialAccountByCode(wsId: any, code: any) {
+      return (
+        socialAccountsStore.find(
+          (a) => a.workspaceId === wsId && a.accountCode === code,
+        ) ?? null
+      );
+    },
+    async listSocialAccounts(wsId: any, filters?: any) {
+      return socialAccountsStore.filter((a) => {
+        if (a.workspaceId !== wsId) return false;
+        if (filters?.platform && a.platform !== filters.platform) return false;
+        if (filters?.status && a.status !== filters.status) return false;
+        return true;
+      });
+    },
+    async updateSocialAccount(wsId: any, id: any, input: any) {
+      const idx = socialAccountsStore.findIndex(
+        (a) => a.workspaceId === wsId && (a.id === id || a.accountCode === id),
+      );
+      if (idx < 0) return null;
+      const existing = socialAccountsStore[idx]!;
+      const updated: SocialAccountRecord = {
+        ...existing,
+        displayName: input.displayName ?? existing.displayName,
+        assignedTopics: input.assignedTopics
+          ? [...input.assignedTopics]
+          : existing.assignedTopics,
+        maxPostsPerDay: input.maxPostsPerDay ?? existing.maxPostsPerDay,
+        minIntervalMinutes: input.minIntervalMinutes ?? existing.minIntervalMinutes,
+        preferredWindows: input.preferredWindows
+          ? [...input.preferredWindows]
+          : existing.preferredWindows,
+        status: input.status ?? existing.status,
+        lastSessionCheckAt:
+          input.lastSessionCheckAt !== undefined
+            ? input.lastSessionCheckAt
+              ? new Date(input.lastSessionCheckAt).toISOString()
+              : null
+            : existing.lastSessionCheckAt,
+        updatedAt: new Date().toISOString(),
+      };
+      socialAccountsStore[idx] = updated;
+      return updated;
+    },
+    async createPublishingCampaign(input: any) {
+      const nowIso = new Date().toISOString();
+      const created: PublishingCampaignRecord = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        name: input.name,
+        topicCodes: [...(input.topicCodes ?? [])],
+        accountIds: [...(input.accountIds ?? [])],
+        startDate: input.startDate ? new Date(input.startDate).toISOString() : null,
+        endDate: input.endDate ? new Date(input.endDate).toISOString() : null,
+        status: input.status ?? "ACTIVE",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      publishingCampaignsStore.push(created);
+      return created;
+    },
+    async listPublishingCampaigns(wsId: any) {
+      return publishingCampaignsStore.filter((c) => c.workspaceId === wsId);
+    },
+    async createPublishingSchedule(input: any) {
+      const nowIso = new Date().toISOString();
+      const created: PublishingScheduleRecord = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        campaignId: input.campaignId ?? null,
+        contentId: input.contentId,
+        accountId: input.accountId,
+        platform: input.platform,
+        scheduledAt: new Date(input.scheduledAt).toISOString(),
+        publishMode: input.publishMode ?? "ASSISTED_PUBLISH",
+        status: input.status ?? "SCHEDULED",
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      publishingSchedulesStore.push(created);
+      return created;
+    },
+    async listPublishingSchedules(wsId: any, filters?: any) {
+      return publishingSchedulesStore.filter((s) => {
+        if (s.workspaceId !== wsId) return false;
+        if (filters?.accountId && s.accountId !== filters.accountId) return false;
+        if (filters?.status && s.status !== filters.status) return false;
+        return true;
+      });
+    },
+    async createPublishingJob(input: any) {
+      const nowIso = new Date().toISOString();
+      const created: PublishingJobRecord = {
+        id: randomUUID(),
+        workspaceId: input.workspaceId,
+        scheduleId: input.scheduleId ?? null,
+        contentId: input.contentId,
+        accountId: input.accountId,
+        platform: input.platform,
+        publishMode: input.publishMode ?? "ASSISTED_PUBLISH",
+        scheduledAt: new Date(input.scheduledAt).toISOString(),
+        idempotencyKey: input.idempotencyKey,
+        status: input.status ?? "QUEUED",
+        errorCode: null,
+        errorMessage: null,
+        retryCount: 0,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      publishingJobsStore.push(created);
+      return created;
+    },
+    async getPublishingJobById(wsId: any, id: any) {
+      return (
+        publishingJobsStore.find((j) => j.workspaceId === wsId && j.id === id) ?? null
+      );
+    },
+    async listPublishingJobs(wsId: any, filters?: any) {
+      return publishingJobsStore.filter((j) => {
+        if (j.workspaceId !== wsId) return false;
+        if (filters?.accountId && j.accountId !== filters.accountId) return false;
+        if (filters?.status && j.status !== filters.status) return false;
+        return true;
+      });
+    },
+    async updatePublishingJobStatus(wsId: any, id: any, input: any) {
+      const idx = publishingJobsStore.findIndex(
+        (j) => j.workspaceId === wsId && j.id === id,
+      );
+      if (idx < 0) return null;
+      const existing = publishingJobsStore[idx]!;
+      const updated: PublishingJobRecord = {
+        ...existing,
+        status: input.status,
+        errorCode: input.errorCode !== undefined ? input.errorCode : existing.errorCode,
+        errorMessage:
+          input.errorMessage !== undefined ? input.errorMessage : existing.errorMessage,
+        retryCount: input.retryCount ?? existing.retryCount,
+        updatedAt: new Date().toISOString(),
+      };
+      publishingJobsStore[idx] = updated;
+      return updated;
+    },
+    async appendPublishingJobStep(input: any) {
+      const step: PublishingJobStepRecord = {
+        id: randomUUID(),
+        jobId: input.jobId,
+        stepName: input.stepName,
+        status: input.status,
+        details: input.details ?? null,
+        createdAt: new Date().toISOString(),
+      };
+      publishingJobStepsStore.push(step);
+      return step;
+    },
+    async listPublishingJobSteps(jobId: any) {
+      return publishingJobStepsStore.filter((s) => s.jobId === jobId);
+    },
+    async recordPublishingResult(input: any) {
+      const idx = publishingResultsStore.findIndex((r) => r.jobId === input.jobId);
+      const rec: PublishingResultRecord = {
+        id: idx >= 0 ? publishingResultsStore[idx]!.id : randomUUID(),
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        contentId: input.contentId,
+        accountId: input.accountId,
+        platform: input.platform,
+        status: input.status,
+        publishedUrl: input.publishedUrl ?? null,
+        screenshotPath: input.screenshotPath ?? null,
+        confirmedBy: input.confirmedBy ?? null,
+        publishedAt: new Date().toISOString(),
+      };
+      if (idx >= 0) {
+        publishingResultsStore[idx] = rec;
+      } else {
+        publishingResultsStore.push(rec);
+      }
+      return rec;
+    },
+    async getPublishingResultByJobId(jobId: any) {
+      return publishingResultsStore.find((r) => r.jobId === jobId) ?? null;
+    },
+  } as unknown as ContentLibraryRepository;
+
+  const mockDocsTransport = {
+    async fetchDocument(docId: string) {
+      return {
+        documentId: docId,
+        title: "Viettel AM Chữ ký số & Hóa đơn điện tử",
+        revisionId: "rev_demo_01",
+        body: {
+          content: [
+            {
+              paragraph: {
+                elements: [
+                  {
+                    textRun: {
+                      content: `[POST_START]
+POST_ID: PB_SYNC_01
+TITLE: Hướng dẫn đăng ký Chữ ký số Viettel-CA online
+TOPIC: CHU_KY_SO
+PLATFORMS: ZALO, FACEBOOK
+STATUS: APPROVED
+CONTENT: Doanh nghiệp có thể đăng ký Chữ ký số Viettel-CA hoàn toàn online với thủ tục đơn giản.
+HASHTAGS: #Viettel #ChuKySo
+[POST_END]
+
+[POST_START]
+POST_ID: PB_SYNC_02
+TITLE: Lợi ích chuyển đổi sang Hóa đơn điện tử S-Invoice
+TOPIC: HOA_DON_DIEN_TU
+PLATFORMS: ZALO
+STATUS: DRAFT
+CONTENT: Tiết kiệm chi phí in ấn và gửi hóa đơn cho khách hàng qua email hoặc tin nhắn SMS.
+HASHTAGS: #SInvoice #Viettel
+[POST_END]`,
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      };
+    },
+  };
+
+  const googleDocsConnector = new GoogleDocsConnector(mockDocsTransport);
+  const topicClassifier = new TopicClassifier();
+  const googleDocsSync = new GoogleDocsSyncService(
+    googleDocsConnector,
+    topicClassifier,
+    contentLibrary,
+  );
+
   return {
     auth,
     guard: new HttpAuthGuard(auth, { secure: false }),
@@ -776,6 +2086,11 @@ export function createDemoApiServices(): ApiServices {
     imports: new InMemoryImportApi(previewPort),
     db,
     operations,
+    googleConnections: googleConnectionsRepo,
+    googleOAuth,
+    googleDrive,
+    contentLibrary,
+    googleDocsSync,
     sessionCookie: {
       secure: false,
       maxAgeSeconds: 28800,
