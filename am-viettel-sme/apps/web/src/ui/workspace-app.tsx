@@ -2074,6 +2074,28 @@ export function WorkspaceApp({
               setError(cause instanceof Error ? cause.message : "ADD_ACCOUNT_FAILED");
             }
           }}
+          onVerifyAccount={async (accountId) => {
+            setError("");
+            try {
+              const res = await api<{ status: string; reason: string }>(
+                `/social-accounts/${encodeURIComponent(accountId)}/verify-session`,
+                jsonInit("POST", {}),
+              );
+              invalidateTabs("fb-poster", "accounts");
+              if (activeTabRef.current === "fb-poster") {
+                await loadTab("fb-poster", { force: true });
+              }
+              if (res.status === "CONNECTED") {
+                setNotice(`🟢 Tài khoản [${accountId}] đã xác minh: Đã đăng nhập và sẵn sàng tác nghiệp!`);
+              } else if (res.status === "CHECKPOINT_2FA") {
+                setError(`🔴 Tài khoản [${accountId}] đang yêu cầu xác minh bảo mật (2FA / Checkpoint)!`);
+              } else {
+                setError(`🟡 Tài khoản [${accountId}] chưa đăng nhập Facebook: ${res.reason}`);
+              }
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "VERIFY_ACCOUNT_FAILED");
+            }
+          }}
             />
           )}
           {tab === "campaigns" && (

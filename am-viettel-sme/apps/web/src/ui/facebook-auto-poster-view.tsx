@@ -67,6 +67,7 @@ export interface FacebookAutoPosterViewProps {
   readonly onSyncAccounts?: (() => Promise<void>) | undefined;
   readonly onLaunchBrowser?: ((accountId: string) => Promise<void>) | undefined;
   readonly onAddAccount?: ((accountName: string) => Promise<void>) | undefined;
+  readonly onVerifyAccount?: ((accountId: string) => Promise<void>) | undefined;
 }
 
 function resolveSpinTaxPreview(template: string, variables: Record<string, string> = {}): string {
@@ -125,6 +126,7 @@ export function FacebookAutoPosterView({
   onSyncAccounts,
   onLaunchBrowser,
   onAddAccount,
+  onVerifyAccount,
 }: FacebookAutoPosterViewProps) {
   // Dual-channel Sub-tab state: "GROUPS" vs "PAGES"
   const [activeSubTab, setActiveSubTab] = useState<"GROUPS" | "PAGES">("GROUPS");
@@ -205,6 +207,7 @@ export function FacebookAutoPosterView({
   // Account management states
   const [isSyncingAccounts, setIsSyncingAccounts] = useState(false);
   const [isLaunchingBrowser, setIsLaunchingBrowser] = useState(false);
+  const [isVerifyingAccount, setIsVerifyingAccount] = useState(false);
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
   const [isAddingAccount, setIsAddingAccount] = useState(false);
@@ -216,6 +219,15 @@ export function FacebookAutoPosterView({
 
   const getAccountHealthBadge = (status: string | undefined) => {
     switch (status) {
+      case "NEEDS_LOGIN":
+        return {
+          icon: "🟡",
+          text: "Chưa đăng nhập Facebook",
+          desc: "Tài khoản chưa đăng nhập vào Facebook. Hãy bấm 'Mở Chrome đăng nhập' để đăng nhập trước khi chạy đăng bài.",
+          color: "#d97706",
+          bg: "#fffbeb",
+          border: "#fde68a",
+        };
       case "CHECKPOINT_2FA":
         return {
           icon: "🔴",
@@ -447,6 +459,36 @@ export function FacebookAutoPosterView({
 
             <button
               type="button"
+              onClick={async () => {
+                if (!selectedAccountId || isVerifyingAccount) return;
+                setIsVerifyingAccount(true);
+                try {
+                  await onVerifyAccount?.(selectedAccountId);
+                } finally {
+                  setIsVerifyingAccount(false);
+                }
+              }}
+              disabled={!selectedAccountId || isVerifyingAccount}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px solid #0284c7",
+                backgroundColor: "#f0f9ff",
+                color: "#0369a1",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: !selectedAccountId || isVerifyingAccount ? "not-allowed" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title="Kiểm tra trực tiếp xem tài khoản Facebook trên trình duyệt đã đăng nhập thành công hay chưa"
+            >
+              🔍 {isVerifyingAccount ? "Đang kiểm tra..." : "Kiểm tra đăng nhập"}
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowAddAccountModal(true)}
               style={{
                 padding: "6px 12px",
@@ -488,12 +530,12 @@ export function FacebookAutoPosterView({
               <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>{accountHealth.desc}</div>
             </div>
           </div>
-          {currentAccount?.status === "CHECKPOINT_2FA" && (
+          {(currentAccount?.status === "CHECKPOINT_2FA" || currentAccount?.status === "NEEDS_LOGIN" || currentAccount?.status === "SESSION_EXPIRED") && (
             <button
               type="button"
               onClick={() => selectedAccountId && onLaunchBrowser?.(selectedAccountId)}
               style={{
-                backgroundColor: "#ef4444",
+                backgroundColor: currentAccount?.status === "CHECKPOINT_2FA" ? "#ef4444" : "#0284c7",
                 color: "#ffffff",
                 border: "none",
                 borderRadius: 6,
@@ -503,7 +545,9 @@ export function FacebookAutoPosterView({
                 cursor: "pointer",
               }}
             >
-              🛡️ Mở Chrome giải quyết Checkpoint ngay
+              {currentAccount?.status === "CHECKPOINT_2FA"
+                ? "🛡️ Mở Chrome giải quyết Checkpoint ngay"
+                : "🌐 Mở Chrome đăng nhập ngay"}
             </button>
           )}
         </div>
@@ -1931,16 +1975,17 @@ export function FacebookAutoPosterView({
                               color: "#dc2626",
                               backgroundColor: "#fee2e2",
                               border: "1px solid #fecaca",
-                              padding: "2px 6px",
+                              padding: "3px 8px",
                               borderRadius: 4,
-                              maxWidth: 240,
+                              maxWidth: 320,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
                               display: "inline-block",
+                              fontWeight: 600,
                             }}
                           >
-                            ⚠️ {l.error ? (l.error.length > 35 ? `${l.error.slice(0, 35)}...` : l.error) : "Lỗi đăng bài"}
+                            ⚠️ {l.error || "Lỗi đăng bài"}
                           </span>
                         ) : (
                           <span style={{ fontSize: 12, color: "#94a3b8" }}>—</span>
@@ -1950,15 +1995,17 @@ export function FacebookAutoPosterView({
                             type="button"
                             onClick={() => setViewProofImage(l.screenshotProofUrl!)}
                             style={{
-                              border: "1px solid #cbd5e1",
-                              backgroundColor: "#f8fafc",
+                              border: l.status === "FAILED" ? "1px solid #fca5a5" : "1px solid #cbd5e1",
+                              backgroundColor: l.status === "FAILED" ? "#fef2f2" : "#f8fafc",
+                              color: l.status === "FAILED" ? "#b91c1c" : "#334155",
                               borderRadius: 4,
                               padding: "2px 6px",
                               fontSize: 11,
                               cursor: "pointer",
+                              fontWeight: 600,
                             }}
                           >
-                            📸 Ảnh minh chứng
+                            {l.status === "FAILED" ? "📸 Xem ảnh lỗi" : "📸 Ảnh minh chứng"}
                           </button>
                         )}
                       </div>

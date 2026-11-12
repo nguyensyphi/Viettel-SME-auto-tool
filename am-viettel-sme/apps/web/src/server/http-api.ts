@@ -1336,6 +1336,20 @@ export async function handleApiRequest(
     }
     if (
       area === "social-accounts" &&
+      rest[0] &&
+      rest[1] === "verify-session" &&
+      rest.length === 2 &&
+      method === "POST"
+    ) {
+      const result = await operations.verifySocialAccountSession(
+        principal.workspaceId,
+        rest[0],
+        "FACEBOOK",
+      );
+      return response(result);
+    }
+    if (
+      area === "social-accounts" &&
       rest[0] === "declare-and-launch" &&
       rest.length === 1 &&
       method === "POST"

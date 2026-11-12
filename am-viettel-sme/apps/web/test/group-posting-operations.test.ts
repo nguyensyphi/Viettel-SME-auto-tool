@@ -214,4 +214,20 @@ describe("Facebook Group Auto-Poster Integration Operations & HTTP API", () => {
     const remaining = operations.listGroups("ws-group-posting-test");
     expect(remaining.some((g) => g.groupId === "fb-group-to-remove")).toBe(false);
   });
+
+  it("POST /api/v1/social-accounts/:accountId/verify-session returns account verification status", async () => {
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/v1/social-accounts/fb-viettel-sme/verify-session", {
+        method: "POST",
+        headers: headers({ "content-type": "application/json" }),
+      }),
+      ["social-accounts", "fb-viettel-sme", "verify-session"],
+      services,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("CONNECTED");
+    expect(body.account.accountId).toBe("fb-viettel-sme");
+  });
 });

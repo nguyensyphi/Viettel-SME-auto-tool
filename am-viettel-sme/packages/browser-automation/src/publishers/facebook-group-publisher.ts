@@ -55,6 +55,43 @@ const PENDING_SELECTORS = [
   "text='pending approval'",
 ];
 
+const LOGIN_PROMPT_SELECTORS = [
+  "input[name='email']",
+  "input[name='pass']",
+  "div[role='button']:has-text('Đăng nhập')",
+  "div[role='button']:has-text('Log In')",
+  "a:has-text('Đăng nhập')",
+  "a:has-text('Log In')",
+  "form[action*='login']",
+];
+
+const JOIN_GROUP_SELECTORS = [
+  "div[role='button']:has-text('Tham gia nhóm')",
+  "div[role='button']:has-text('Join group')",
+  "div[aria-label='Tham gia nhóm']",
+  "div[aria-label='Join group']",
+  "button:has-text('Tham gia nhóm')",
+  "button:has-text('Join group')",
+];
+
+const ADMIN_ONLY_SELECTORS = [
+  "text='Chỉ quản trị viên mới có thể đăng'",
+  "text='Only admins can post'",
+  "text='Tính năng đăng bài bị tắt'",
+  "text='Posting is turned off'",
+];
+
+const FB_ERROR_DIALOG_SELECTORS = [
+  "div[role='dialog']:has-text('Bạn đang thực hiện thao tác này quá nhanh')",
+  "div[role='dialog']:has-text('You’re going too fast')",
+  "div[role='dialog']:has-text('Hành động này bị chặn')",
+  "div[role='dialog']:has-text('This action was blocked')",
+  "div[role='dialog']:has-text('tiêu chuẩn cộng đồng')",
+  "div[role='dialog']:has-text('Community Standards')",
+  "div[role='dialog']:has-text('Có lỗi xảy ra')",
+  "div[role='dialog']:has-text('Something went wrong')",
+];
+
 function cleanPostUrl(raw: string): string {
   let cleaned = raw.split("?")[0] ?? raw;
   cleaned = cleaned.split("&")[0] ?? cleaned;
@@ -102,7 +139,7 @@ export async function publishToFacebookGroup(
     currentUrl.toLowerCase().includes("suspended")
   ) {
     throw new Error(
-      "CHECKPOINT_DETECTED: Account checkpoint or suspension detected on Facebook",
+      "[XÁC_MINH_DANH_TÍNH_2FA] CHECKPOINT_DETECTED: Account checkpoint or suspension detected on Facebook",
     );
   }
 
@@ -111,8 +148,22 @@ export async function publishToFacebookGroup(
     currentUrl.toLowerCase().includes("/login/")
   ) {
     throw new Error(
-      "NEEDS_LOGIN: Tài khoản Facebook chưa đăng nhập. Vui lòng bấm 'Mở Chrome đăng nhập' trên bảng Tài khoản để đăng nhập trước khi chạy đăng bài!",
+      "[CHƯA_ĐĂNG_NHẬP] NEEDS_LOGIN: Tài khoản Facebook chưa đăng nhập. Vui lòng bấm 'Mở Chrome đăng nhập' trên bảng Tài khoản để đăng nhập trước khi chạy đăng bài!",
     );
+  }
+
+  // Pre-flight check: Login forms / buttons on page
+  for (const loginSel of LOGIN_PROMPT_SELECTORS) {
+    try {
+      const loc = page.locator(loginSel);
+      if ((await loc.count()) > 0 && (await loc.first().isVisible())) {
+        throw new Error(
+          "[CHƯA_ĐĂNG_NHẬP] NEEDS_LOGIN: Tài khoản chưa đăng nhập Facebook (phát hiện form đăng nhập trên trang). Vui lòng bấm 'Mở Chrome đăng nhập'!",
+        );
+      }
+    } catch (err: any) {
+      if (err.message?.includes("[CHƯA_ĐĂNG_NHẬP]")) throw err;
+    }
   }
 
   const pageContent = typeof page.content === "function" ? await page.content().catch(() => "") : "";
@@ -122,8 +173,36 @@ export async function publishToFacebookGroup(
     pageContent.includes("Trang này không hiển thị")
   ) {
     throw new Error(
-      "GROUP_NOT_ACCESSIBLE: Không thể truy cập nhóm này. Nhóm có thể là nhóm kín mà tài khoản chưa tham gia, hoặc URL nhóm không chính xác.",
+      "[NHÓM_KHÔNG_TỒN_TẠI] GROUP_NOT_ACCESSIBLE: Không thể truy cập nhóm này. Nhóm có thể là nhóm kín mà tài khoản chưa tham gia, hoặc URL nhóm không chính xác.",
     );
+  }
+
+  // Check if account has NOT joined group
+  for (const joinSel of JOIN_GROUP_SELECTORS) {
+    try {
+      const loc = page.locator(joinSel);
+      if ((await loc.count()) > 0 && (await loc.first().isVisible())) {
+        throw new Error(
+          `[CHƯA_THAM_GIA_NHÓM] Tài khoản chưa là thành viên của nhóm (${groupUrl}). Vui lòng bấm tham gia nhóm trước khi chạy đăng bài tự động!`,
+        );
+      }
+    } catch (err: any) {
+      if (err.message?.includes("[CHƯA_THAM_GIA_NHÓM]")) throw err;
+    }
+  }
+
+  // Check if admin only
+  for (const adminSel of ADMIN_ONLY_SELECTORS) {
+    try {
+      const loc = page.locator(adminSel);
+      if ((await loc.count()) > 0 && (await loc.first().isVisible())) {
+        throw new Error(
+          `[NHÓM_KHÓA_ĐĂNG_BÀI] Nhóm này chỉ cho phép Quản trị viên đăng bài hoặc tài khoản của bạn bị hạn chế quyền đăng.`,
+        );
+      }
+    } catch (err: any) {
+      if (err.message?.includes("[NHÓM_KHÓA_ĐĂNG_BÀI]")) throw err;
+    }
   }
 
   // 3. Confirm identity modal if present ("Tiếp tục dưới tên...")
@@ -225,7 +304,27 @@ export async function publishToFacebookGroup(
       throw new Error("FACEBOOK_SUBMIT_BUTTON_NOT_FOUND");
     }
 
-    // 8. Verify post outcome
+    // 8. Error Interception & Verify Outcome
+    // Check Facebook error dialogs / alerts
+    for (const errSel of FB_ERROR_DIALOG_SELECTORS) {
+      try {
+        const errLoc = page.locator(errSel);
+        if ((await errLoc.count()) > 0 && (await errLoc.first().isVisible())) {
+          let errText = "Facebook từ chối đăng bài do vi phạm chính sách hoặc tần suất.";
+          try {
+            if (typeof errLoc.first().innerText === "function") {
+              errText = (await errLoc.first().innerText()).trim().replace(/\n+/g, " ");
+            }
+          } catch {}
+          throw new Error(
+            `[FACEBOOK_TỪ_CHỐI_ĐĂNG] Facebook trả về lỗi: "${errText}". Khuyến nghị kiểm tra nội dung bài viết hoặc tạm dừng đăng bài bằng nick này.`,
+          );
+        }
+      } catch (err: any) {
+        if (err.message?.includes("[FACEBOOK_TỪ_CHỐI_ĐĂNG]")) throw err;
+      }
+    }
+
     if (capturedUrl) {
       return {
         status: "PUBLISHED",
@@ -272,6 +371,20 @@ export async function publishToFacebookGroup(
         }
       } catch {
         // ignore
+      }
+    }
+
+    // Check if composer dialog remained open (Fail-closed)
+    for (const tbSel of TEXTBOX_SELECTORS) {
+      try {
+        const tbLoc = page.locator(tbSel);
+        if ((await tbLoc.count()) > 0 && (await tbLoc.first().isVisible())) {
+          throw new Error(
+            `[ĐĂNG_BÀI_CHƯA_HOÀN_TẤT] Khung soạn bài vẫn chưa đóng sau khi bấm gửi. Facebook có thể đang xử lý chậm hoặc yêu cầu thao tác bổ sung.`,
+          );
+        }
+      } catch (err: any) {
+        if (err.message?.includes("[ĐĂNG_BÀI_CHƯA_HOÀN_TẤT]")) throw err;
       }
     }
 
@@ -363,6 +476,23 @@ export async function runFacebookGroupPublishSession(
       details: publishResult.details,
       proofPath,
     };
+  } catch (err: any) {
+    let errorProofPath: string | undefined;
+    if (page) {
+      try {
+        const reportsDir = path.resolve(options.storageRootDir ?? "storage", "reports/ui-audit");
+        if (!fs.existsSync(reportsDir)) {
+          fs.mkdirSync(reportsDir, { recursive: true });
+        }
+        errorProofPath = path.join(reportsDir, `proof-error-${options.jobId ?? Date.now()}.png`);
+        await page.screenshot({ path: errorProofPath, fullPage: false });
+      } catch {
+        // optional screenshot
+      }
+    }
+    const enhancedError = new Error(err?.message || String(err));
+    (enhancedError as any).errorProofPath = errorProofPath;
+    throw enhancedError;
   } finally {
     if (page && isCdp) {
       try {
@@ -376,6 +506,111 @@ export async function runFacebookGroupPublishSession(
       } catch {
         // ignore
       }
+    }
+  }
+}
+
+export interface VerifyFacebookSessionOptions {
+  readonly accountId: string;
+  readonly storageRootDir?: string | undefined;
+}
+
+export interface VerifyFacebookSessionResult {
+  readonly status: "CONNECTED" | "NEEDS_LOGIN" | "CHECKPOINT_2FA";
+  readonly reason: string;
+  readonly checkedAt: string;
+}
+
+export async function verifyFacebookSession(
+  options: VerifyFacebookSessionOptions,
+): Promise<VerifyFacebookSessionResult> {
+  const pw = await import("playwright-core");
+  let browserOrContext: any = null;
+  let page: any = null;
+  let isCdp = false;
+
+  try {
+    try {
+      const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
+      browserOrContext = cdpBrowser;
+      const contexts = cdpBrowser.contexts();
+      const defaultCtx = contexts[0] || (await cdpBrowser.newContext());
+      page = await defaultCtx.newPage();
+      isCdp = true;
+    } catch {
+      const profileDir = path.resolve(options.storageRootDir ?? "storage", "browser_profiles", options.accountId);
+      const context = await pw.chromium.launchPersistentContext(profileDir, {
+        headless: true,
+        channel: "chrome",
+        viewport: { width: 1280, height: 800 },
+        args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+      });
+      browserOrContext = context;
+      page = context.pages()[0] || (await context.newPage());
+    }
+
+    await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 20000 });
+    const currentUrl = (typeof page.url === "function" ? page.url() : String(page.url || "")).toLowerCase();
+
+    if (currentUrl.includes("/checkpoint") || currentUrl.includes("/recover") || currentUrl.includes("/suspended")) {
+      return {
+        status: "CHECKPOINT_2FA",
+        reason: "Tài khoản đang yêu cầu xác minh bảo mật (2FA / Checkpoint)",
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    if (currentUrl.includes("/login") || currentUrl.includes("login.php")) {
+      return {
+        status: "NEEDS_LOGIN",
+        reason: "Chưa đăng nhập Facebook (Bị chuyển hướng về trang đăng nhập)",
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    for (const loginSel of LOGIN_PROMPT_SELECTORS) {
+      const cnt = await page.locator(loginSel).count().catch(() => 0);
+      if (cnt > 0) {
+        return {
+          status: "NEEDS_LOGIN",
+          reason: "Chưa đăng nhập Facebook (Phát hiện form đăng nhập trên trang)",
+          checkedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    const authIndicators = [
+      "[aria-label='Tài khoản của bạn']",
+      "[aria-label='Your profile']",
+      "[aria-label='Facebook']",
+      "[role='navigation']",
+      "[data-pagelet='LeftRail']",
+    ];
+    for (const ind of authIndicators) {
+      const cnt = await page.locator(ind).count().catch(() => 0);
+      if (cnt > 0) {
+        return {
+          status: "CONNECTED",
+          reason: "Tài khoản đã đăng nhập và sẵn sàng tác nghiệp",
+          checkedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    return {
+      status: "NEEDS_LOGIN",
+      reason: "Không tìm thấy phiên đăng nhập Facebook hợp lệ",
+      checkedAt: new Date().toISOString(),
+    };
+  } finally {
+    if (page && isCdp) {
+      try {
+        await page.close();
+      } catch {}
+    } else if (browserOrContext && !isCdp) {
+      try {
+        await browserOrContext.close();
+      } catch {}
     }
   }
 }

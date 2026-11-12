@@ -194,4 +194,83 @@ describe("publishToFacebookGroup Engine (MOD-PC-003 & fb-auto-poster parity)", (
     expect(result.status).toBe("PENDING_APPROVAL");
     expect(result.details).toContain("chờ quản trị viên phê duyệt");
   });
+
+  it("detects and throws [CHƯA_ĐĂNG_NHẬP] when login form prompt is visible on page", async () => {
+    const mock = createMockGroupPage({
+      url: "https://www.facebook.com/groups/sme_dian",
+      visibleSelectors: ["input[name='email']", "input[name='pass']"],
+    });
+
+    await expect(
+      publishToFacebookGroup({
+        page: mock.page as any,
+        groupUrl: "https://www.facebook.com/groups/sme_dian",
+        content: "Viettel CA",
+        submit: true,
+      }),
+    ).rejects.toThrow(/\[CHƯA_ĐĂNG_NHẬP\]/);
+  });
+
+  it("detects and throws [CHƯA_THAM_GIA_NHÓM] when 'Tham gia nhóm' button is visible", async () => {
+    const joinSelector = "div[role='button']:has-text('Tham gia nhóm')";
+    const mock = createMockGroupPage({
+      url: "https://www.facebook.com/groups/sme_dian",
+      visibleSelectors: [joinSelector],
+    });
+
+    await expect(
+      publishToFacebookGroup({
+        page: mock.page as any,
+        groupUrl: "https://www.facebook.com/groups/sme_dian",
+        content: "Viettel SME",
+        submit: true,
+      }),
+    ).rejects.toThrow(/\[CHƯA_THAM_GIA_NHÓM\]/);
+  });
+
+  it("detects and throws [FACEBOOK_TỪ_CHỐI_ĐĂNG] when Facebook displays rate-limit or spam dialog", async () => {
+    const composerSelector = "div[role='button']:has-text('Bạn viết gì đi...')";
+    const textboxSelector = "div[role='dialog'] div[role='textbox'][contenteditable='true']";
+    const submitSelector = "div[role='dialog'] div[aria-label='Đăng']";
+    const errorSelector = "div[role='dialog']:has-text('Bạn đang thực hiện thao tác này quá nhanh')";
+
+    const mock = createMockGroupPage({
+      url: "https://www.facebook.com/groups/sme_dian",
+      visibleSelectors: [
+        composerSelector,
+        textboxSelector,
+        submitSelector,
+        errorSelector,
+      ],
+    });
+
+    await expect(
+      publishToFacebookGroup({
+        page: mock.page as any,
+        groupUrl: "https://www.facebook.com/groups/sme_dian",
+        content: "Viettel SME Solution",
+        submit: true,
+      }),
+    ).rejects.toThrow(/\[FACEBOOK_TỪ_CHỐI_ĐĂNG\]/);
+  });
+
+  it("detects and throws [ĐĂNG_BÀI_CHƯA_HOÀN_TẤT] when compose dialog remains open after clicking submit", async () => {
+    const composerSelector = "div[role='button']:has-text('Bạn viết gì đi...')";
+    const textboxSelector = "div[role='dialog'] div[role='textbox'][contenteditable='true']";
+    const submitSelector = "div[role='dialog'] div[aria-label='Đăng']";
+
+    const mock = createMockGroupPage({
+      url: "https://www.facebook.com/groups/sme_dian",
+      visibleSelectors: [composerSelector, textboxSelector, submitSelector],
+    });
+
+    await expect(
+      publishToFacebookGroup({
+        page: mock.page as any,
+        groupUrl: "https://www.facebook.com/groups/sme_dian",
+        content: "Viettel SME Solution",
+        submit: true,
+      }),
+    ).rejects.toThrow(/\[ĐĂNG_BÀI_CHƯA_HOÀN_TẤT\]/);
+  });
 });

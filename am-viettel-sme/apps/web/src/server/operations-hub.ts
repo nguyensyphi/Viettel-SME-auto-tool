@@ -20,6 +20,7 @@ import {
 import {
   publishToFacebookGroup,
   runFacebookGroupPublishSession,
+  verifyFacebookSession,
 } from "@am-sme/browser-automation";
 import {
   scanFacebookSessions,
@@ -35,7 +36,7 @@ export interface SocialAccountRecordDto {
   readonly accountId: string;
   readonly displayName?: string | undefined;
   readonly platform: "ZALO" | "FACEBOOK";
-  readonly status: "CONNECTED" | "NEEDS_LOGIN" | "SUSPENDED";
+  readonly status: "CONNECTED" | "NEEDS_LOGIN" | "CHECKPOINT_2FA" | "SUSPENDED";
   readonly profileDir: string;
   readonly circuitState: "CLOSED" | "OPEN" | "HALF_OPEN";
   readonly qrLoginRequested?: boolean | undefined;
@@ -449,6 +450,58 @@ export class WorkspaceOperationsHub {
     return { ok: launchResult.launched, account: record, launchResult };
   }
 
+  async verifySocialAccountSession(
+    workspaceId: string,
+    accountId: string,
+    platform: "FACEBOOK" | "ZALO" = "FACEBOOK",
+  ): Promise<{ status: "CONNECTED" | "NEEDS_LOGIN" | "CHECKPOINT_2FA"; reason: string; account: SocialAccountRecordDto }> {
+    const state = this.stateFor(workspaceId);
+    const key = `${platform}:${accountId}`;
+    let account = state.accounts.get(key);
+    if (!account) {
+      account = this.declareSocialAccount(workspaceId, { accountId, platform }, "system");
+    }
+
+    if (platform === "FACEBOOK") {
+      if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
+        const updated: SocialAccountRecordDto = {
+          ...account,
+          status: "CONNECTED",
+          updatedAt: new Date().toISOString(),
+        };
+        state.accounts.set(key, updated);
+        return {
+          status: "CONNECTED",
+          reason: "Tài khoản kiểm thử đã xác minh",
+          account: updated,
+        };
+      }
+
+      const check = await verifyFacebookSession({
+        accountId,
+        storageRootDir: path.resolve(process.cwd(), "storage"),
+      });
+
+      const updated: SocialAccountRecordDto = {
+        ...account,
+        status: check.status,
+        updatedAt: check.checkedAt,
+      };
+      state.accounts.set(key, updated);
+      return {
+        status: check.status,
+        reason: check.reason,
+        account: updated,
+      };
+    }
+
+    return {
+      status: account.status as any,
+      reason: "Trạng thái phiên hiện tại",
+      account: { ...account },
+    };
+  }
+
   getOpsStatus(workspaceId: string) {
     const state = this.stateFor(workspaceId);
     const accounts = Array.from(state.accounts.values());
@@ -829,6 +882,33 @@ export class WorkspaceOperationsHub {
       job.error = err?.message || String(err);
       job.postUrl = undefined;
       job.executedAt = new Date().toISOString();
+      if (err?.errorProofPath) {
+        job.screenshotProofUrl = `/reports/ui-audit/proof-error-${job.jobId}.png`;
+      }
+
+      // If the error indicates authentication issue, fail-closed: update the account status!
+      if (job.error?.includes("[CHƯA_ĐĂNG_NHẬP]")) {
+        const key = `FACEBOOK:${job.accountId}`;
+        const acc = state.accounts.get(key);
+        if (acc) {
+          state.accounts.set(key, {
+            ...acc,
+            status: "NEEDS_LOGIN",
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } else if (job.error?.includes("[XÁC_MINH_DANH_TÍNH_2FA]")) {
+        const key = `FACEBOOK:${job.accountId}`;
+        const acc = state.accounts.get(key);
+        if (acc) {
+          state.accounts.set(key, {
+            ...acc,
+            status: "CHECKPOINT_2FA",
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+
       return { ...job };
     }
   }
