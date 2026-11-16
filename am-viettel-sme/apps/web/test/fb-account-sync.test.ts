@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { beforeEach, describe, expect, it, afterEach, vi } from "vitest";
 import { scanFacebookSessions, sanitizeAccountSlug, formatAccountDisplayName } from "../src/server/fb-account-scanner.js";
-import { buildDesktopLoginArgs, launchDesktopLoginBrowser } from "../src/server/desktop-login-launcher.js";
+import { buildDesktopLoginArgs, getProfileDebugPort, launchDesktopLoginBrowser } from "../src/server/desktop-login-launcher.js";
 import { WorkspaceOperationsHub } from "../src/server/operations-hub.js";
 
 describe("Facebook Account Discovery & Session Scanner", () => {
@@ -69,11 +69,18 @@ describe("Facebook Account Discovery & Session Scanner", () => {
     expect(emptyAcc?.status).toBe("NEEDS_LOGIN");
   });
 
-  it("builds correct command line arguments for desktop browser login", () => {
+  it("builds correct command line arguments for desktop browser login with isolated per-profile debug port", () => {
     const profileDir = path.join(tempDir, "facebook_profile_test");
+    const otherProfileDir = path.join(tempDir, "facebook_profile_other");
     const launchConfig = buildDesktopLoginArgs(profileDir, "https://www.facebook.com");
+    const expectedPort = getProfileDebugPort(profileDir);
 
+    expect(expectedPort).toBeGreaterThanOrEqual(9222);
+    expect(expectedPort).toBeLessThan(9400);
+    expect(getProfileDebugPort(otherProfileDir)).not.toBe(expectedPort);
     expect(launchConfig.args).toContain(`--user-data-dir=${profileDir}`);
+    expect(launchConfig.args).toContain(`--remote-debugging-port=${expectedPort}`);
+    expect(launchConfig.args).toContain("--new-window");
     expect(launchConfig.args).toContain("https://www.facebook.com");
     expect(launchConfig.args).toContain("--no-first-run");
   });

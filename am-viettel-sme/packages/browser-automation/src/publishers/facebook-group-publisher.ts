@@ -1,5 +1,48 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+
+export function getProfileDebugPort(profileDir: string): number {
+  const normalized = path.resolve(profileDir).toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+  }
+  return 9222 + (hash % 178);
+}
+
+export function cleanupStuckChromeForProfile(profileDir: string): void {
+  if (process.platform !== "win32") return;
+  try {
+    const resolved = path.resolve(profileDir);
+    const psScript = `
+      $ErrorActionPreference = 'SilentlyContinue'
+      $prof = $env:AGY_CHROME_PROFILE
+      if ($prof) {
+        Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" |
+          Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($prof, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+      }
+    `;
+    spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", psScript], {
+      env: { ...process.env, AGY_CHROME_PROFILE: resolved },
+      timeout: 5000,
+      windowsHide: true,
+    });
+    for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]) {
+      const lockPath = path.join(resolved, lockName);
+      if (fs.existsSync(lockPath)) {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // ignore if still locked
+        }
+      }
+    }
+  } catch {
+    // ignore cleanup errors
+  }
+}
 
 export interface FacebookGroupPublishInput {
   readonly page: any;
@@ -437,21 +480,23 @@ export async function runFacebookGroupPublishSession(
       fs.mkdirSync(targetProfileDir, { recursive: true });
     }
 
+    const debugPort = getProfileDebugPort(targetProfileDir);
+
     try {
-      const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
+      const cdpBrowser = await pw.chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 2500 });
       browserOrContext = cdpBrowser;
       const contexts = cdpBrowser.contexts();
       const defaultCtx = contexts[0] || (await cdpBrowser.newContext());
       page = await defaultCtx.newPage();
       isCdp = true;
     } catch {
-      // 2. If Chrome not open with CDP, launch isolated persistent context
+      // 2. If Chrome not open with CDP, launch isolated persistent context (with auto-cleanup retry if locked)
       try {
         const context = await pw.chromium.launchPersistentContext(targetProfileDir, {
           headless: false,
           channel: "chrome",
           viewport: { width: 1280, height: 800 },
-          args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+          args: ["--new-window", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
         });
         browserOrContext = context;
         page = context.pages()[0] || (await context.newPage());
@@ -461,11 +506,24 @@ export async function runFacebookGroupPublishSession(
           launchErr?.message?.includes("ProcessSingleton") ||
           launchErr?.message?.includes("lock file")
         ) {
-          throw new Error(
-            `[XUNG_ĐỘT_TRÌNH_DUYỆT] Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc đang có tiến trình chạy ngầm. Vui lòng đóng tất cả các cửa sổ Chrome của nick này rồi bấm [🔄 Thử lại]!`,
-          );
+          cleanupStuckChromeForProfile(targetProfileDir);
+          try {
+            const retryContext = await pw.chromium.launchPersistentContext(targetProfileDir, {
+              headless: false,
+              channel: "chrome",
+              viewport: { width: 1280, height: 800 },
+              args: ["--new-window", "--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+            });
+            browserOrContext = retryContext;
+            page = retryContext.pages()[0] || (await retryContext.newPage());
+          } catch {
+            throw new Error(
+              `[XUNG_ĐỘT_TRÌNH_DUYỆT] Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc đang có tiến trình chạy ngầm. Vui lòng đóng tất cả các cửa sổ Chrome của nick này rồi bấm [🔄 Thử lại]!`,
+            );
+          }
+        } else {
+          throw launchErr;
         }
-        throw launchErr;
       }
     }
 
@@ -559,9 +617,11 @@ export async function verifyFacebookSession(
     fs.mkdirSync(targetProfileDir, { recursive: true });
   }
 
+  const debugPort = getProfileDebugPort(targetProfileDir);
+
   try {
     try {
-      const cdpBrowser = await pw.chromium.connectOverCDP("http://127.0.0.1:9222", { timeout: 2500 });
+      const cdpBrowser = await pw.chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 2500 });
       browserOrContext = cdpBrowser;
       const contexts = cdpBrowser.contexts();
       const defaultCtx = contexts[0] || (await cdpBrowser.newContext());
@@ -583,13 +643,26 @@ export async function verifyFacebookSession(
           launchErr?.message?.includes("ProcessSingleton") ||
           launchErr?.message?.includes("lock file")
         ) {
-          return {
-            status: "NEEDS_LOGIN",
-            reason: `Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc có tiến trình chạy ngầm. Hãy đóng Chrome để hệ thống xác minh.`,
-            checkedAt: new Date().toISOString(),
-          };
+          cleanupStuckChromeForProfile(targetProfileDir);
+          try {
+            const retryContext = await pw.chromium.launchPersistentContext(targetProfileDir, {
+              headless: true,
+              channel: "chrome",
+              viewport: { width: 1280, height: 800 },
+              args: ["--disable-gpu", "--no-first-run", "--no-default-browser-check"],
+            });
+            browserOrContext = retryContext;
+            page = retryContext.pages()[0] || (await retryContext.newPage());
+          } catch {
+            return {
+              status: "NEEDS_LOGIN",
+              reason: `Trình duyệt Chrome của tài khoản '${options.accountId}' đang được mở hoặc có tiến trình chạy ngầm. Hãy đóng Chrome để hệ thống xác minh.`,
+              checkedAt: new Date().toISOString(),
+            };
+          }
+        } else {
+          throw launchErr;
         }
-        throw launchErr;
       }
     }
 
