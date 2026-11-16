@@ -310,17 +310,29 @@ export class WorkspaceOperationsHub {
     const state = this.stateFor(workspaceId);
     const key = `${platform}:${cleanId}`;
     const existing = state.accounts.get(key);
+    const profileDir = existing?.profileDir ?? `storage/browser_profiles/${cleanId}`;
     const record: SocialAccountRecordDto = {
       accountId: cleanId,
+      ...(existing?.displayName ? { displayName: existing.displayName } : {}),
       platform,
       status: "NEEDS_LOGIN",
-      profileDir: `storage/browser_profiles/${cleanId}`,
+      profileDir,
       circuitState: existing?.circuitState ?? "CLOSED",
       qrLoginRequested: true,
       updatedByUserId: actorUserId,
       updatedAt: new Date().toISOString(),
     };
     state.accounts.set(key, record);
+    if (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
+      try {
+        launchDesktopLoginBrowser({
+          profileDir,
+          url: platform === "FACEBOOK" ? "https://www.facebook.com" : "https://chat.zalo.me",
+        });
+      } catch {
+        // ignore browser launch errors during qr login request
+      }
+    }
     return { ...record };
   }
 
@@ -848,11 +860,20 @@ export class WorkspaceOperationsHub {
       throw new Error(`GROUP_JOB_NOT_FOUND:${jobId}`);
     }
 
+    if (state.killSwitch.active) {
+      job.status = "FAILED";
+      job.error = `[KILL_SWITCH_ACTIVE] Công tắc dừng khẩn cấp toàn hệ thống đang bật (${state.killSwitch.reason ?? "Quản trị viên tạm dừng"}).`;
+      job.executedAt = new Date().toISOString();
+      return { ...job };
+    }
+
     job.status = "RUNNING";
 
     // In unit test environment, keep simulated behavior for mock assertions
     if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
-      state.groupManager.recordGroupPost(job.groupId, new Date());
+      if (state.groupManager.getGroup(job.groupId)) {
+        state.groupManager.recordGroupPost(job.groupId, new Date());
+      }
       const timestamp = Date.now();
       job.status = "PUBLISHED";
       job.postUrl = `${job.groupUrl}/posts/${timestamp}/`;
@@ -884,12 +905,14 @@ export class WorkspaceOperationsHub {
         jobId: job.jobId,
       });
 
-      state.groupManager.recordGroupPost(job.groupId, new Date());
+      if (state.groupManager.getGroup(job.groupId)) {
+        state.groupManager.recordGroupPost(job.groupId, new Date());
+      }
       job.status = result.status;
       job.postUrl = result.postUrl;
       job.executedAt = new Date().toISOString();
       if (result.proofPath) {
-        job.screenshotProofUrl = `/reports/ui-audit/proof-${job.jobId}.png`;
+        job.screenshotProofUrl = `/api/v1/proofs/proof-${job.jobId}.png`;
       }
 
       return { ...job };
@@ -899,7 +922,7 @@ export class WorkspaceOperationsHub {
       job.postUrl = undefined;
       job.executedAt = new Date().toISOString();
       if (err?.errorProofPath) {
-        job.screenshotProofUrl = `/reports/ui-audit/proof-error-${job.jobId}.png`;
+        job.screenshotProofUrl = `/api/v1/proofs/proof-error-${job.jobId}.png`;
       }
 
       // If the error indicates authentication issue, fail-closed: update the account status!

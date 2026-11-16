@@ -213,7 +213,9 @@ export async function publishToFacebookGroup(
   if (
     pageContent.includes("Bạn hiện không xem được nội dung này") ||
     pageContent.includes("This content isn't available right now") ||
-    pageContent.includes("Trang này không hiển thị")
+    pageContent.includes("This content isn't available at the moment") ||
+    pageContent.includes("Trang này không hiển thị") ||
+    pageContent.includes("Nội dung này không còn")
   ) {
     throw new Error(
       "[NHÓM_KHÔNG_TỒN_TẠI] GROUP_NOT_ACCESSIBLE: Không thể truy cập nhóm này. Nhóm có thể là nhóm kín mà tài khoản chưa tham gia, hoặc URL nhóm không chính xác.",
@@ -345,6 +347,10 @@ export async function publishToFacebookGroup(
 
     if (!clickedSubmit) {
       throw new Error("FACEBOOK_SUBMIT_BUTTON_NOT_FOUND");
+    }
+
+    if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(3000);
     }
 
     // 8. Error Interception & Verify Outcome

@@ -93,11 +93,32 @@ export function resolveSessionsDirectory(customPath?: string): string | null {
 export function isSessionConnected(profileDir: string): boolean {
   if (!fs.existsSync(profileDir)) return false;
 
+  const cookieFiles = [
+    path.join(profileDir, "Default", "Network", "Cookies"),
+    path.join(profileDir, "Default", "Cookies"),
+    path.join(profileDir, "Network", "Cookies"),
+    path.join(profileDir, "Cookies"),
+  ];
+
+  for (const cookieFile of cookieFiles) {
+    if (fs.existsSync(cookieFile)) {
+      try {
+        const raw = fs.readFileSync(cookieFile, "latin1");
+        if (raw.startsWith("SQLite format 3")) {
+          // Real Chromium SQLite cookie database: require Facebook's authenticated 'c_user' cookie
+          return raw.includes("c_user");
+        }
+        return true;
+      } catch {
+        // File may be locked by an active Chrome window
+        return true;
+      }
+    }
+  }
+
   const indicators = [
     path.join(profileDir, "Default"),
     path.join(profileDir, "Default", "Preferences"),
-    path.join(profileDir, "Default", "Network", "Cookies"),
-    path.join(profileDir, "Cookies"),
     path.join(profileDir, "Network"),
   ];
 
@@ -119,42 +140,70 @@ export function isSessionConnected(profileDir: string): boolean {
 }
 
 export function scanFacebookSessions(sessionsDir?: string): DiscoveredFacebookAccount[] {
-  const resolvedDir = resolveSessionsDirectory(sessionsDir);
-  if (!resolvedDir || !fs.existsSync(resolvedDir)) {
-    return [];
+  const dirsToScan: string[] = [];
+  if (sessionsDir) {
+    const resolved = resolveSessionsDirectory(sessionsDir);
+    if (resolved && fs.existsSync(resolved)) {
+      dirsToScan.push(resolved);
+    }
+  } else {
+    const primary = resolveSessionsDirectory();
+    if (primary && fs.existsSync(primary)) {
+      dirsToScan.push(primary);
+    }
+    const localStorageProfiles = path.resolve(process.cwd(), "storage/browser_profiles");
+    if (fs.existsSync(localStorageProfiles) && !dirsToScan.includes(localStorageProfiles)) {
+      dirsToScan.push(localStorageProfiles);
+    }
   }
 
-  const results: DiscoveredFacebookAccount[] = [];
-  const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
+  const byAccountId = new Map<string, DiscoveredFacebookAccount>();
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const name = entry.name;
-
-    // Filter out backup folders, temp images, gemini profile, hidden folders
-    if (
-      name.startsWith(".") ||
-      name.toLowerCase().includes("backup") ||
-      name.toLowerCase().includes("temp") ||
-      name.toLowerCase().includes("gemini")
-    ) {
+  for (const dir of dirsToScan) {
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
       continue;
     }
 
-    const fullPath = path.resolve(resolvedDir, name);
-    const accountId = sanitizeAccountSlug(name);
-    const displayName = formatAccountDisplayName(name);
-    const connected = isSessionConnected(fullPath);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
 
-    results.push({
-      accountId,
-      displayName,
-      folderName: name,
-      profileDir: fullPath,
-      status: connected ? "CONNECTED" : "NEEDS_LOGIN",
-      platform: "FACEBOOK",
-    });
+      // Filter out backup folders, temp images, gemini profile, hidden folders, zalo profiles
+      if (
+        name.startsWith(".") ||
+        name.toLowerCase().startsWith("zalo") ||
+        name.toLowerCase().includes("backup") ||
+        name.toLowerCase().includes("temp") ||
+        name.toLowerCase().includes("gemini")
+      ) {
+        continue;
+      }
+
+      const fullPath = path.resolve(dir, name);
+      const accountId = sanitizeAccountSlug(name);
+      const displayName = formatAccountDisplayName(name);
+      const connected = isSessionConnected(fullPath);
+
+      const candidate: DiscoveredFacebookAccount = {
+        accountId,
+        displayName,
+        folderName: name,
+        profileDir: fullPath,
+        status: connected ? "CONNECTED" : "NEEDS_LOGIN",
+        platform: "FACEBOOK",
+      };
+
+      const existing = byAccountId.get(accountId);
+      if (!existing || (existing.status !== "CONNECTED" && candidate.status === "CONNECTED")) {
+        byAccountId.set(accountId, candidate);
+      }
+    }
   }
 
-  return results.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return Array.from(byAccountId.values()).sort((a, b) =>
+    a.displayName.localeCompare(b.displayName),
+  );
 }

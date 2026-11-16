@@ -750,6 +750,7 @@ export function WorkspaceApp({
           content: j.content ?? "",
           status: j.status ?? "QUEUED",
           postUrl: j.postUrl ?? j.publishedUrl,
+          screenshotProofUrl: j.screenshotProofUrl,
           error: j.error,
           dispatchedAt: j.dispatchedAt ?? new Date().toISOString(),
           executedAt: j.executedAt,
@@ -1958,7 +1959,7 @@ export function WorkspaceApp({
               onRunJob={async (jobId) => {
                 setError("");
                 try {
-                  const res = await api<{ status?: string; postUrl?: string }>(
+                  const res = await api<{ status?: string; postUrl?: string; error?: string }>(
                     `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
                     jsonInit("POST", {}),
                   );
@@ -1966,9 +1967,15 @@ export function WorkspaceApp({
                   if (activeTabRef.current === "fb-poster") {
                     await loadTab("fb-poster", { force: true });
                   }
-                  setNotice(
-                    `🎉 Đã xuất bản thành công (${res.status})! Link minh chứng: ${res.postUrl ?? "Đã cập nhật trong bảng"}`,
-                  );
+                  if (res.status === "FAILED") {
+                    setError(res.error ?? "Đăng bài không thành công. Xem chi tiết lỗi tại bảng Nhật ký.");
+                  } else if (res.status === "PENDING_APPROVAL") {
+                    setNotice("⏳ Bài viết đã được gửi lên nhóm và đang chờ Quản trị viên phê duyệt (PENDING_APPROVAL).");
+                  } else {
+                    setNotice(
+                      `🎉 Đã xuất bản thành công (${res.status})! Link minh chứng: ${res.postUrl ?? "Đã cập nhật trong bảng"}`,
+                    );
+                  }
                 } catch (cause) {
                   setError(
                     cause instanceof Error
@@ -2149,7 +2156,7 @@ export function WorkspaceApp({
               onRunGroupJob={async (jobId) => {
                 setError("");
                 try {
-                  const res = await api<{ status?: string; postUrl?: string }>(
+                  const res = await api<{ status?: string; postUrl?: string; error?: string }>(
                     `/campaigns/group-jobs/${encodeURIComponent(jobId)}/run`,
                     jsonInit("POST", {}),
                   );
@@ -2157,9 +2164,15 @@ export function WorkspaceApp({
                   if (activeTabRef.current === "campaigns") {
                     await loadTab("campaigns", { force: true });
                   }
-                  setNotice(
-                    `Đã thực thi đăng bài (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
-                  );
+                  if (res.status === "FAILED") {
+                    setError(res.error ?? "Thực thi đăng bài thất bại.");
+                  } else if (res.status === "PENDING_APPROVAL") {
+                    setNotice("⏳ Bài viết đang chờ Quản trị viên nhóm phê duyệt (PENDING_APPROVAL).");
+                  } else {
+                    setNotice(
+                      `Đã thực thi đăng bài (${res.status}): ${res.postUrl ?? "Đang xử lý"}`,
+                    );
+                  }
                 } catch (cause) {
                   setError(
                     cause instanceof Error

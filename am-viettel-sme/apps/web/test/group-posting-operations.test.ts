@@ -230,4 +230,64 @@ describe("Facebook Group Auto-Poster Integration Operations & HTTP API", () => {
     expect(body.status).toBe("CONNECTED");
     expect(body.account.accountId).toBe("fb-viettel-sme");
   });
+
+  it("executes Fanpage / Personal Wall post jobs without throwing GROUP_NOT_FOUND and blocks execution when Kill Switch is active", async () => {
+    const dispatchRes = await handleApiRequest(
+      new Request("http://localhost/api/v1/fb-poster/dispatch-page-post", {
+        method: "POST",
+        headers: headers({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          accountId: "fb-viettel-sme",
+          postId: "POST-WALL-01",
+          postTitle: "Giải pháp Chữ ký số Viettel-CA",
+          content: "Ưu đãi 30% cho DN mới thành lập",
+          targetType: "PERSONAL_WALL",
+        }),
+      }),
+      ["fb-poster", "dispatch-page-post"],
+      services,
+    );
+    expect(dispatchRes.status).toBe(200);
+    const { job } = await dispatchRes.json();
+    expect(job.groupId).toBe("target-profile");
+
+    // 1. Activate Kill Switch -> job execution must fail-closed with [KILL_SWITCH_ACTIVE]
+    operations.setKillSwitch("ws-group-posting-test", true, "am-gp-01", "Kiểm thử khẩn cấp");
+    const blockedRes = await handleApiRequest(
+      new Request(`http://localhost/api/v1/campaigns/group-jobs/${job.jobId}/run`, {
+        method: "POST",
+        headers: headers({ "content-type": "application/json" }),
+      }),
+      ["campaigns", "group-jobs", job.jobId, "run"],
+      services,
+    );
+    const blockedJob = await blockedRes.json();
+    expect(blockedJob.status).toBe("FAILED");
+    expect(blockedJob.error).toContain("[KILL_SWITCH_ACTIVE]");
+
+    // 2. Deactivate Kill Switch -> retry succeeds without GROUP_NOT_FOUND
+    operations.setKillSwitch("ws-group-posting-test", false, "am-gp-01");
+    const runRes = await handleApiRequest(
+      new Request(`http://localhost/api/v1/campaigns/group-jobs/${job.jobId}/run`, {
+        method: "POST",
+        headers: headers({ "content-type": "application/json" }),
+      }),
+      ["campaigns", "group-jobs", job.jobId, "run"],
+      services,
+    );
+    const executedJob = await runRes.json();
+    expect(executedJob.status).toBe("PUBLISHED");
+  });
+
+  it("GET /api/v1/proofs/:filename validates filename against path traversal", async () => {
+    const badRes = await handleApiRequest(
+      new Request("http://localhost/api/v1/proofs/..%2Fsecret.png", {
+        method: "GET",
+        headers: headers(),
+      }),
+      ["proofs", "../secret.png"],
+      services,
+    );
+    expect(badRes.status).toBe(400);
+  });
 });

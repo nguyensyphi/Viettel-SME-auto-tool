@@ -475,6 +475,10 @@ export function CalendarView({
                           >
                             Xác nhận đã đăng
                           </button>
+                        ) : job.status === "QUEUED" ? (
+                          <span className="muted">⏳ Đang chờ xuất bản</span>
+                        ) : job.status === "FAILED" ? (
+                          <span style={{ color: "#dc2626", fontWeight: 600 }}>⚠️ Thất bại</span>
                         ) : (
                           <span className="muted">Hoàn tất</span>
                         )}

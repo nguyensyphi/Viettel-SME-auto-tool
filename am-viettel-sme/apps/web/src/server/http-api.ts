@@ -1895,6 +1895,11 @@ export async function handleApiRequest(
       rest[2] === "run-next" &&
       method === "POST"
     ) {
+      const opsStatus = operations.getOpsStatus(principal.workspaceId);
+      if (opsStatus.killSwitch.active) {
+        return response({ error: "KILL_SWITCH_ACTIVE" }, 423);
+      }
+
       const batchId = rest[1];
       const outreachService = operations.getZaloOutreachService(
         principal.workspaceId,
@@ -1914,6 +1919,35 @@ export async function handleApiRequest(
       const summary = outreachService.getBatchSummary(batchId);
       const batch = outreachService.getBatch(batchId);
       return response({ result: runnerResult, summary, batch });
+    }
+
+    if (
+      area === "proofs" &&
+      rest[0] &&
+      rest.length === 1 &&
+      method === "GET"
+    ) {
+      const fileName = rest[0].trim();
+      if (!/^proof-[a-zA-Z0-9_-]+\.png$/u.test(fileName)) {
+        return response({ error: "INVALID_PROOF_FILENAME" }, 400);
+      }
+      const candidates = [
+        nodePath.resolve(process.cwd(), "storage/reports/ui-audit", fileName),
+        nodePath.resolve(process.cwd(), "apps/web/storage/reports/ui-audit", fileName),
+      ];
+      for (const filePath of candidates) {
+        if (fs.existsSync(filePath)) {
+          const bytes = fs.readFileSync(filePath);
+          return new Response(bytes, {
+            status: 200,
+            headers: {
+              "content-type": "image/png",
+              "cache-control": "no-store",
+            },
+          });
+        }
+      }
+      return response({ error: "PROOF_NOT_FOUND" }, 404);
     }
 
     if (

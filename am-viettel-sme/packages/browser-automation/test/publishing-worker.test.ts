@@ -33,6 +33,9 @@ function createPublisherMockPage(options: {
       first: () => ({
         click: vi.fn(async () => {
           clickedSelectors.push(selector);
+          if (selector.includes("aria-label='Đăng'") || selector.includes("aria-label='Post'")) {
+            visible.delete("div[role='dialog'] div[role='textbox'][contenteditable='true']");
+          }
         }),
         fill: vi.fn(async () => {}),
         pressSequentially: vi.fn(async (text: string, opts?: { delay?: number | undefined }) => {
